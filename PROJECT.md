@@ -40,7 +40,7 @@
 ```powershell
 # 编译（公共包在 zan-lang 仓库的 packages/ 下）
 pwsh -File client/tools/build.ps1 -Compiler D:\project\zan-lang\build\zanc.exe `
-    -Stdlib D:\project\zan-head\stdlib -PackageProject D:\project\zan-head
+    -Stdlib D:\project\zan-lang\stdlib -PackageProject D:\project\zan-lang
 
 # 运行（build/arena/Arena.exe）
 cd build/arena; .\Arena.exe
@@ -62,7 +62,7 @@ cd build/arena; .\Arena.exe
 
 ```powershell
 pwsh -File client/tools/test.ps1 -Compiler D:\project\zan-lang\build\zanc.exe `
-    -PackageProject D:\project\zan-head
+    -PackageProject D:\project\zan-lang
 ```
 
 三段全绿才算过：
