@@ -1,0 +1,87 @@
+using System;
+using System.Collections.Generic;
+using Game.Kit;
+
+// 波次：数量规则、解锁规则、兵种编排。
+//
+// 规则（写死的口径）：
+//   · 第 N 波生成 2 + N 个敌人，上限 20 个；
+//   · 冲锋兵第 2 波起进入混编、炮塔第 4 波起、重装兵第 6 波起；
+//   · 第 1 波是教学波：清一色冲锋兵（否则第 1 波无兵可出）。
+public class ArenaWave {
+    public const int MaxEnemies = 20;
+    public const int SupplyMs = 3000;    // 波间补给期（毫秒）
+    public const int SpawnIntervalMs = 260;   // 同波敌人错开出场的间隔
+
+    public int wave;          // 当前波数（0 = 还没开打）
+    public int target;        // 本波敌人总数
+    public int spawned;       // 本波已出场数
+    public int supplyLeftMs;  // 补给期剩余毫秒（>0 = 补给中）
+    public bool waveRunning;  // 本波是否已开打
+
+    public ArenaWave() {
+        this.Reset();
+    }
+
+    public void Reset() {
+        this.wave = 0;
+        this.target = 0;
+        this.spawned = 0;
+        this.supplyLeftMs = 0;
+        this.waveRunning = false;
+    }
+
+    // 第 N 波的敌人数量：2 + N，封顶 20。
+    public static int EnemyCount(int wave) {
+        int n = 2 + wave;
+        if (n > ArenaWave.MaxEnemies) { n = ArenaWave.MaxEnemies; }
+        if (n < 1) { n = 1; }
+        return n;
+    }
+
+    // 开一波。
+    public void Begin(int wave) {
+        this.wave = wave;
+        this.target = ArenaWave.EnemyCount(wave);
+        this.spawned = 0;
+        this.supplyLeftMs = 0;
+        this.waveRunning = true;
+    }
+
+    // 本波兵种编排（同种子结果稳定）。
+    public static List<int> Roster(int wave, Rng rng) {
+        List<int> list = new List<int>();
+        int count = ArenaWave.EnemyCount(wave);
+        if (wave <= 1) {
+            // 教学波：清一色冲锋兵。
+            for (int i = 0; i < count; i = i + 1) { list.Add(ArenaEnemy.Chaser); }
+            return list;
+        }
+        for (int i = 0; i < count; i = i + 1) {
+            list.Add(ArenaWave.PickKind(wave, rng));
+        }
+        bool hasChaser = false;
+        for (int i = 0; i < list.Count; i = i + 1) {
+            if (list[i] == ArenaEnemy.Chaser) { hasChaser = true; }
+        }
+        if (!hasChaser) { list[0] = ArenaEnemy.Chaser; }
+        return list;
+    }
+
+    // 抽一个兵种：未解锁的兵种不会出现在这一波。
+    public static int PickKind(int wave, Rng rng) {
+        int roll = rng.Range(0, 100);
+        if (wave >= ArenaEnemy.UnlockWave(ArenaEnemy.Brute) && roll < 18) {
+            return ArenaEnemy.Brute;
+        }
+        if (wave >= ArenaEnemy.UnlockWave(ArenaEnemy.Turret) && roll < 48) {
+            return ArenaEnemy.Turret;
+        }
+        return ArenaEnemy.Chaser;
+    }
+
+    // 本波是否打完（场上没敌人且没有待出场的）。
+    public bool Cleared(int alive, int pending) {
+        return !this.waveRunning && alive == 0 && pending == 0;
+    }
+}

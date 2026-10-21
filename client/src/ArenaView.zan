@@ -1,0 +1,397 @@
+using System;
+using System.IO;
+using Gui;
+using Game.Kit;
+
+// 一个可点的按钮（菜单/结算面板用）。
+public class ArenaButton {
+    public string label;
+    public int x;
+    public int y;
+    public int w;
+    public int h;
+    public bool primary;
+
+    public ArenaButton(string label, int x, int y, int w, int h, bool primary) {
+        this.label = label;
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+        this.primary = primary;
+    }
+}
+
+// 渲染层：贴图加载 + 战场/HUD/菜单/结算画面。
+//
+// 角色、敌人、子弹、爆炸、掉落物全部用真实位图（assets/*.png）；几何绘制
+// 只用在 HUD（血条/耐力条/文字/边框）这类界面部件上。贴图找不到就退回
+// 纯色绘制，不崩。
+public class ArenaView {
+    public const int MapW = 960;
+    public const int MapH = 600;
+
+    public string groundPath = "";
+    public string playerPath = "";
+    public string chaserPath = "";
+    public string turretPath = "";
+    public string brutePath = "";
+    public string bulletPath = "";
+    public string explodePath = "";
+    public string ammoPath = "";
+    public string healthPath = "";
+    public string coverPath = "";
+
+    public int mapX;   // 竞技场在舞台中的左上角（舞台比地图大时居中）
+    public int mapY;
+
+    // 载入贴图（磁盘优先；找不到就留空，走 fallback 绘制）。
+    public void LoadAssets() {
+        this.groundPath = ArenaView.FindAsset("assets/ground.png");
+        this.playerPath = ArenaView.FindAsset("assets/player.png");
+        this.chaserPath = ArenaView.FindAsset("assets/chaser.png");
+        this.turretPath = ArenaView.FindAsset("assets/turret.png");
+        this.brutePath = ArenaView.FindAsset("assets/brute.png");
+        this.bulletPath = ArenaView.FindAsset("assets/bullet.png");
+        this.explodePath = ArenaView.FindAsset("assets/explode.png");
+        this.ammoPath = ArenaView.FindAsset("assets/ammo.png");
+        this.healthPath = ArenaView.FindAsset("assets/health.png");
+        this.coverPath = ArenaView.FindAsset("assets/cover.png");
+    }
+
+    static string FindAsset(string rel) {
+        string p = Assets.Find(rel);
+        if (!File.Exists(p)) { return ""; }
+        return p;
+    }
+
+    // 舞台尺寸变化时重算竞技场位置。
+    // 顶部给宿主标题栏留 48 像素（Gui 的 chrome 是画在内容区之上的，
+    // 不留位的话 HUD 与设置按钮会被标题栏盖住、点不到）。
+    public void Layout(int stageW, int stageH) {
+        this.mapX = (stageW - ArenaView.MapW) / 2;
+        if (this.mapX < 0) { this.mapX = 0; }
+        int reserve = 48;
+        if (stageH >= ArenaView.MapH + reserve) {
+            this.mapY = reserve;
+            int extra = (stageH - ArenaView.MapH - reserve) / 2;
+            if (extra > 0) { this.mapY = reserve + extra; }
+        } else {
+            this.mapY = 0;
+        }
+    }
+
+    // 舞台坐标 → 竞技场坐标（鼠标瞄准用）。
+    public double ToMapX(int stageX) { return (double)(stageX - this.mapX); }
+    public double ToMapY(int stageY) { return (double)(stageY - this.mapY); }
+
+    // ----- 战场 ---------------------------------------------------------
+
+    // 画整幅战场：地面位图 + 墙体 + 掩体 + 实体。
+    public void DrawWorld(Canvas c, ArenaGame g, int stageW, int stageH) {
+        // 地面：整块贴图铺满竞技场（舞台更宽时把余下部分也铺上，避免黑边）。
+        if (this.groundPath != "") {
+            CDraw.BlitImage(c, this.groundPath, 0, 0, stageW, stageH);
+        } else {
+            CDraw.FillRect(c, 0, 0, stageW, stageH, 0xFF1E2530);
+        }
+        int mx = this.mapX;
+        int my = this.mapY;
+
+        // 墙体：竞技场四周 22 像素厚的暗带 + 内沿亮边。
+        int wall = (int)ArenaWorld.Wall;
+        CDraw.FillRect(c, mx, my, ArenaView.MapW, wall, 0xB0101419);
+        CDraw.FillRect(c, mx, my + ArenaView.MapH - wall, ArenaView.MapW, wall, 0xB0101419);
+        CDraw.FillRect(c, mx, my, wall, ArenaView.MapH, 0xB0101419);
+        CDraw.FillRect(c, mx + ArenaView.MapW - wall, my, wall, ArenaView.MapH, 0xB0101419);
+        CDraw.Line(c, mx + wall, my + wall, mx + ArenaView.MapW - wall, my + wall, 2, 120, 140, 165, 200);
+        CDraw.Line(c, mx + wall, my + ArenaView.MapH - wall, mx + ArenaView.MapW - wall,
+            my + ArenaView.MapH - wall, 2, 120, 140, 165, 200);
+        CDraw.Line(c, mx + wall, my + wall, mx + wall, my + ArenaView.MapH - wall, 2, 120, 140, 165, 200);
+        CDraw.Line(c, mx + ArenaView.MapW - wall, my + wall, mx + ArenaView.MapW - wall,
+            my + ArenaView.MapH - wall, 2, 120, 140, 165, 200);
+
+        // 掩体：障碍块位图（可交互物也有自己的美术），再压一层暗色 + 描边。
+        int covers = ArenaWorld.CoverCount();
+        for (int i = 0; i < covers; i = i + 1) {
+            double cx; double cy; double cw; double ch;
+            ArenaWorld.CoverRect(i, out cx, out cy, out cw, out ch);
+            int rx = mx + (int)cx;
+            int ry = my + (int)cy;
+            int rw = (int)cw;
+            int rh = (int)ch;
+            if (this.coverPath != "") {
+                CDraw.BlitImage(c, this.coverPath, rx, ry, rw, rh);
+            } else {
+                CDraw.FillRect(c, rx, ry, rw, rh, 0xFF39434F);
+            }
+            CDraw.FillRect(c, rx, ry, rw, rh, 0x33000000);
+            CDraw.RingRect(c, rx, ry, rw, rh, 2, 150, 170, 200, 200);
+        }
+
+        // 掉落物
+        for (int i = 0; i < g.pickups.Count; i = i + 1) {
+            ArenaPickup p = g.pickups[i];
+            int px = mx + (int)p.x - 11;
+            int py = my + (int)p.y - 11;
+            if (p.kind == ArenaPickup.Health) {
+                if (this.healthPath != "") {
+                    CDraw.BlitImage(c, this.healthPath, px, py, 22, 22);
+                } else {
+                    CDraw.FillRect(c, px, py, 22, 22, 0xFFE8E8E8);
+                }
+            } else {
+                if (this.ammoPath != "") {
+                    CDraw.BlitImage(c, this.ammoPath, px, py, 22, 22);
+                } else {
+                    CDraw.FillRect(c, px, py, 22, 22, 0xFF4CAF50);
+                }
+            }
+        }
+
+        // 敌人
+        for (int i = 0; i < g.enemies.Count; i = i + 1) {
+            ArenaEnemy e = g.enemies[i];
+            this.DrawEnemy(c, e, mx, my);
+        }
+
+        // 玩家
+        this.DrawPlayer(c, g.player, mx, my);
+
+        // 子弹
+        for (int i = 0; i < g.bullets.Count; i = i + 1) {
+            ArenaBullet b = g.bullets[i];
+            int bx = mx + (int)b.x - 7;
+            int by = my + (int)b.y - 7;
+            if (this.bulletPath != "") {
+                CDraw.BlitImage(c, this.bulletPath, bx, by, 14, 14);
+            } else {
+                CDraw.FillCircle(c, mx + (int)b.x, my + (int)b.y, 4,
+                    255, 200, 90, 255);
+            }
+        }
+
+        // 爆炸特效
+        for (int i = 0; i < g.effects.Count; i = i + 1) {
+            ArenaEffect fx = g.effects[i];
+            int size = (int)fx.CurrentSize();
+            int ex = mx + (int)fx.x - size / 2;
+            int ey = my + (int)fx.y - size / 2;
+            if (this.explodePath != "") {
+                CDraw.BlitImage(c, this.explodePath, ex, ey, size, size);
+            } else {
+                CDraw.FillCircle(c, mx + (int)fx.x, my + (int)fx.y, size / 2,
+                    255, 170, 60, 200);
+            }
+        }
+    }
+
+    // 玩家：位图 + 枪口方向指示。
+    void DrawPlayer(Canvas c, ArenaPlayer p, int mx, int my) {
+        int size = 40;
+        int px = mx + (int)p.x - size / 2;
+        int py = my + (int)p.y - size / 2;
+        if (this.playerPath != "") {
+            CDraw.BlitImage(c, this.playerPath, px, py, size, size);
+        } else {
+            CDraw.FillCircle(c, mx + (int)p.x, my + (int)p.y, 14, 62, 143, 214, 255);
+        }
+        // 瞄准指示：从玩家指向当前瞄准角。
+        double ax = Math.Cos(p.aim);
+        double ay = Math.Sin(p.aim);
+        int bx = mx + (int)p.x + (int)(ax * 16.0);
+        int by = my + (int)p.y + (int)(ay * 16.0);
+        int tx = mx + (int)p.x + (int)(ax * 30.0);
+        int ty = my + (int)p.y + (int)(ay * 30.0);
+        CDraw.Line(c, bx, by, tx, ty, 3, 255, 220, 120, 220);
+    }
+
+    // 敌人：按兵种选贴图。
+    void DrawEnemy(Canvas c, ArenaEnemy e, int mx, int my) {
+        string path = "";
+        int size = 40;
+        if (e.kind == ArenaEnemy.Turret) {
+            path = this.turretPath;
+            size = 46;
+        } else if (e.kind == ArenaEnemy.Brute) {
+            path = this.brutePath;
+            size = 64;
+        } else {
+            path = this.chaserPath;
+            size = 38;
+        }
+        int ex = mx + (int)e.x - size / 2;
+        int ey = my + (int)e.y - size / 2;
+        if (path != "") {
+            CDraw.BlitImage(c, path, ex, ey, size, size);
+        } else {
+            int col = 0xFFCE4A4A;
+            if (e.kind == ArenaEnemy.Turret) { col = 0xFF6FA85C; }
+            if (e.kind == ArenaEnemy.Brute) { col = 0xFF9B6BD6; }
+            CDraw.FillCircle(c, mx + (int)e.x, my + (int)e.y, (int)e.radius,
+                (col >> 16) & 255, (col >> 8) & 255, col & 255, 255);
+        }
+        // 血条（敌人血量是界面信息，用几何条）。
+        int barW = size;
+        int hp = e.maxHp > 0 ? (e.hp * barW) / e.maxHp : 0;
+        CDraw.FillRect(c, ex, ey - 7, barW, 4, 0xAA101418);
+        CDraw.FillRect(c, ex, ey - 7, hp, 4, 0xFFE05A4E);
+    }
+
+    // ----- HUD ----------------------------------------------------------
+
+    // 抬头显示：血量、耐力、弹药、波次、战绩。
+    public void DrawHud(Canvas c, ArenaGame g) {
+        int mx = this.mapX;
+        int my = this.mapY;
+        // 血条
+        CDraw.FillRect(c, mx + 16, my + 16, 240, 18, 0xB0141820);
+        int hpW = (g.player.hp * 220) / ArenaPlayer.MaxHp;
+        CDraw.FillRect(c, mx + 20, my + 20, hpW, 10, 0xFF48C78E);
+        CDraw.RingRect(c, mx + 16, my + 16, 240, 18, 1, 90, 110, 140, 220);
+        c.DrawText(CDraw.MapX(mx + 264 + CDraw.originX), CDraw.MapY(my + 18 + CDraw.originY),
+            "HP " + Convert.ToString(g.player.hp), 0xFFE8F0FA, CDraw.MapW(15));
+        // 耐力条
+        CDraw.FillRect(c, mx + 16, my + 40, 240, 12, 0xB0141820);
+        int stW = (int)((g.player.stamina * 220.0) / ArenaPlayer.MaxStamina);
+        CDraw.FillRect(c, mx + 20, my + 43, stW, 6, 0xFF4FA3E3);
+        // 弹药
+        string ammoText = "弹药 " + Convert.ToString(g.player.ammo) + " / "
+            + Convert.ToString(ArenaPlayer.MaxAmmo);
+        c.DrawText(CDraw.MapX(mx + 16 + CDraw.originX), CDraw.MapY(my + 60 + CDraw.originY),
+            ammoText, 0xFFFFD98A, CDraw.MapW(16));
+        // 波次信息（右上，避开设置按钮）
+        string wave = "第 " + Convert.ToString(g.waveReached) + " 波   击杀 "
+            + Convert.ToString(g.kills) + "   命中率 "
+            + Convert.ToString((int)(g.Accuracy() * 100.0)) + "%";
+        int tw = c.MeasureText(wave, CDraw.MapW(16));
+        c.DrawText(CDraw.MapX(mx + ArenaView.MapW - tw - 16 + CDraw.originX),
+            CDraw.MapY(my + 50 + CDraw.originY), wave, 0xFFC8D8E8, CDraw.MapW(16));
+        // 连杀
+        if (g.streak > 1) {
+            string st = "连杀 x" + Convert.ToString(g.streak);
+            int sw = c.MeasureText(st, CDraw.MapW(18));
+            c.DrawText(CDraw.MapX(mx + ArenaView.MapW - sw - 16 + CDraw.originX),
+                CDraw.MapY(my + 74 + CDraw.originY), st, 0xFFFFB347, CDraw.MapW(18));
+        }
+        // 补给期提示
+        if (g.wave.supplyLeftMs > 0) {
+            double sec = (double)g.wave.supplyLeftMs / 1000.0;
+            string s = "补给中 " + Convert.ToString((int)sec + 1) + " 秒";
+            int sw2 = c.MeasureText(s, CDraw.MapW(20));
+            c.DrawText(CDraw.MapX(mx + (ArenaView.MapW - sw2) / 2 + CDraw.originX),
+                CDraw.MapY(my + 96 + CDraw.originY), s, 0xFF8FD8A6, CDraw.MapW(20));
+        }
+        // 空弹提示
+        if (g.player.ammo <= 0) {
+            string s = "弹药耗尽！";
+            int sw3 = c.MeasureText(s, CDraw.MapW(20));
+            c.DrawText(CDraw.MapX(mx + (ArenaView.MapW - sw3) / 2 + CDraw.originX),
+                CDraw.MapY(my + ArenaView.MapH - 44 + CDraw.originY), s, 0xFFE05A4E, CDraw.MapW(20));
+        }
+    }
+
+    // 准星（鼠标位置）。
+    public void DrawCrosshair(Canvas c, double mapMouseX, double mapMouseY) {
+        int cx = this.mapX + (int)mapMouseX;
+        int cy = this.mapY + (int)mapMouseY;
+        CDraw.CircleStroke(c, cx, cy, 9, 2, 255, 230, 140, 220);
+        CDraw.Line(c, cx - 14, cy, cx - 4, cy, 2, 255, 230, 140, 220);
+        CDraw.Line(c, cx + 4, cy, cx + 14, cy, 2, 255, 230, 140, 220);
+        CDraw.Line(c, cx, cy - 14, cx, cy - 4, 2, 255, 230, 140, 220);
+        CDraw.Line(c, cx, cy + 4, cx, cy + 14, 2, 255, 230, 140, 220);
+    }
+
+    // ----- 菜单 ---------------------------------------------------------
+
+    // 主菜单：标题 + 历史战绩 + 操作提示。
+    public void DrawMenu(Canvas c, int stageW, int stageH, int bestWave,
+                         int bestScore, int bestStreak, int runs) {
+        // 菜单背景也用真实地面位图（压暗），不是纯色块。
+        if (this.groundPath != "") {
+            CDraw.BlitImage(c, this.groundPath, 0, 0, stageW, stageH);
+        }
+        CDraw.FillRect(c, 0, 0, stageW, stageH, 0xD00A0D12);
+        string title = "裂 谷 竞 技";
+        int tw = c.MeasureText(title, CDraw.MapW(54));
+        c.DrawText(CDraw.MapX((stageW - tw) / 2 + CDraw.originX),
+            CDraw.MapY(84 + CDraw.originY), title, 0xFFF2C14E, CDraw.MapW(54));
+        string sub = "ARENA · 俯视角波次射击";
+        int sw = c.MeasureText(sub, CDraw.MapW(18));
+        c.DrawText(CDraw.MapX((stageW - sw) / 2 + CDraw.originX),
+            CDraw.MapY(146 + CDraw.originY), sub, 0xFF9FB4C4, CDraw.MapW(18));
+        string rec = "最高波数 " + Convert.ToString(bestWave)
+            + "   最高分 " + Convert.ToString(bestScore)
+            + "   最高连杀 " + Convert.ToString(bestStreak)
+            + "   局数 " + Convert.ToString(runs);
+        int rw = c.MeasureText(rec, CDraw.MapW(16));
+        c.DrawText(CDraw.MapX((stageW - rw) / 2 + CDraw.originX),
+            CDraw.MapY(182 + CDraw.originY), rec, 0xFFC8D8E8, CDraw.MapW(16));
+        string help = "WASD / 方向键移动 · 鼠标瞄准 · 左键或空格射击 · Shift 冲刺 · Esc 设置";
+        int hw = c.MeasureText(help, CDraw.MapW(15));
+        c.DrawText(CDraw.MapX((stageW - hw) / 2 + CDraw.originX),
+            CDraw.MapY(stageH - 56 + CDraw.originY), help, 0xFF8FA6B4, CDraw.MapW(15));
+    }
+
+    // 结算面板：本局波数、击杀、命中率、最高连杀、用时 + 历史最佳。
+    public void DrawResult(Canvas c, ArenaGame g, int stageW, int stageH,
+                           int bestWave, int bestScore, int bestStreak) {
+        CDraw.FillRect(c, 0, 0, stageW, stageH, 0xB0000000);
+        int pw = 460;
+        int ph = 300;
+        int px = (stageW - pw) / 2;
+        int py = (stageH - ph) / 2;
+        CDraw.FillRect(c, px, py, pw, ph, 0xF01A2028);
+        CDraw.RingRect(c, px, py, pw, ph, 2, 242, 193, 78, 255);
+        string title = "任务失败";
+        int tw = c.MeasureText(title, CDraw.MapW(30));
+        c.DrawText(CDraw.MapX(px + (pw - tw) / 2 + CDraw.originX),
+            CDraw.MapY(py + 22 + CDraw.originY), title, 0xFFE05A4E, CDraw.MapW(30));
+        string[] labels = new string[] {
+            "到达波数", "击杀数", "命中率", "最高连杀", "用时", "得分"
+        };
+        string[] values = new string[] {
+            Convert.ToString(g.waveReached),
+            Convert.ToString(g.kills),
+            Convert.ToString((int)(g.Accuracy() * 100.0)) + "%",
+            Convert.ToString(g.maxStreak),
+            Convert.ToString((int)g.ElapsedSeconds()) + " 秒",
+            Convert.ToString(g.Score())
+        };
+        int ty = py + 76;
+        for (int i = 0; i < labels.Length; i = i + 1) {
+            c.DrawText(CDraw.MapX(px + 48 + CDraw.originX), CDraw.MapY(ty + CDraw.originY),
+                labels[i], 0xFF9FB4C4, CDraw.MapW(17));
+            int vw = c.MeasureText(values[i], CDraw.MapW(19));
+            c.DrawText(CDraw.MapX(px + pw - vw - 48 + CDraw.originX), CDraw.MapY(ty + CDraw.originY),
+                values[i], 0xFFF2C14E, CDraw.MapW(19));
+            ty = ty + 36;
+        }
+        string rec = "历史最佳：第 " + Convert.ToString(bestWave) + " 波 · "
+            + Convert.ToString(bestScore) + " 分 · 连杀 " + Convert.ToString(bestStreak);
+        int rw = c.MeasureText(rec, CDraw.MapW(15));
+        c.DrawText(CDraw.MapX(px + (pw - rw) / 2 + CDraw.originX),
+            CDraw.MapY(py + ph - 32 + CDraw.originY), rec, 0xFF8FA6B4, CDraw.MapW(15));
+    }
+
+    // 按钮（几何绘制属于界面部件，允许）。
+    public void DrawButton(Canvas c, ArenaButton b, bool hover) {
+        int bg = 0xFF223040;
+        int edge = 0xFF3C4A5E;
+        int text = 0xFFEAF2F8;
+        if (b.primary) {
+            bg = 0xFF3E8FD6;
+            edge = 0xFF7FB2E5;
+        }
+        if (hover) {
+            if (b.primary) { bg = 0xFF57A6E6; }
+            else { bg = 0xFF2E3F54; }
+        }
+        CDraw.FillRect(c, b.x, b.y, b.w, b.h, bg);
+        CDraw.RingRect(c, b.x, b.y, b.w, b.h, 2, (edge >> 16) & 255,
+            (edge >> 8) & 255, edge & 255, 255);
+        int tw = c.MeasureText(b.label, CDraw.MapW(18));
+        c.DrawText(CDraw.MapX(b.x + (b.w - tw) / 2 + CDraw.originX),
+            CDraw.MapY(b.y + (b.h - 22) / 2 + CDraw.originY), b.label, text, CDraw.MapW(18));
+    }
+}

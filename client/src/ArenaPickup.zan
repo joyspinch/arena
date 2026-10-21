@@ -1,0 +1,41 @@
+using System;
+
+// 掉落物：敌人死亡掉落弹药箱或医疗包，玩家走过去拾取。
+public class ArenaPickup {
+    public const int Ammo = 0;
+    public const int Health = 1;
+
+    public double x;
+    public double y;
+    public int kind;
+    public int amount;
+    public double life;   // 剩余存在时间（秒）
+    public bool dead;
+
+    public ArenaPickup(double x, double y, int kind, int amount) {
+        this.x = x;
+        this.y = y;
+        this.kind = kind;
+        this.amount = amount;
+        this.life = 14.0;
+        this.dead = false;
+    }
+
+    public void Update(double dt) {
+        this.life = this.life - dt;
+        if (this.life <= 0.0) { this.dead = true; }
+    }
+
+    // 是否被玩家（圆）碰到。
+    public bool PickedUp(ArenaPlayer player) {
+        double dx = this.x - player.x;
+        double dy = this.y - player.y;
+        double rr = this.radius() + ArenaPlayer.Radius + 4.0;
+        return dx * dx + dy * dy <= rr * rr;
+    }
+
+    public double radius() {
+        if (this.kind == ArenaPickup.Health) { return 11.0; }
+        return 10.0;
+    }
+}

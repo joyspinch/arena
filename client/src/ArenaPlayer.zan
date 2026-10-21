@@ -1,0 +1,157 @@
+using System;
+
+// 玩家：移动带加速度与摩擦、鼠标瞄准、有限弹药、冲刺耐力槽。
+//
+// 这里是纯逻辑（不碰渲染），玩法用例可以直接驱动它。
+public class ArenaPlayer {
+    public const double Radius = 14.0;
+    public const double MaxSpeed = 210.0;
+    public const double Accel = 1500.0;
+    public const double Friction = 7.0;
+    public const double FireInterval = 0.14;   // 秒（射速上限）
+    public const double BulletSpeed = 640.0;
+    public const int BulletDamage = 10;
+    public const int MaxHp = 100;
+    public const int MaxAmmo = 99;
+    public const int StartAmmo = 60;
+    public const double MaxStamina = 100.0;
+
+    public double x;
+    public double y;
+    public double vx;
+    public double vy;
+    public int hp;
+    public int ammo;
+    public double stamina;
+    public double aim;        // 瞄准角（弧度）
+    public double fireTimer;  // 距下次可射击的秒数
+    public double sprintIdle; // 冲刺后恢复耐力的冷却计时
+    public double hurtFlash;  // 受击闪烁计时
+    public bool alive;
+
+    public ArenaPlayer() {
+        this.Reset(ArenaWorld.SpawnX(), ArenaWorld.SpawnY());
+    }
+
+    // 复位到开局状态（血满、弹药初始 60、耐力满）。
+    public void Reset(double sx, double sy) {
+        this.x = sx;
+        this.y = sy;
+        this.vx = 0.0;
+        this.vy = 0.0;
+        this.hp = ArenaPlayer.MaxHp;
+        this.ammo = ArenaPlayer.StartAmmo;
+        this.stamina = ArenaPlayer.MaxStamina;
+        this.aim = -1.5707963;   // 默认朝上
+        this.fireTimer = 0.0;
+        this.sprintIdle = 0.0;
+        this.hurtFlash = 0.0;
+        this.alive = true;
+    }
+
+    // 能不能开火：活着、有弹药、射速冷却已过。
+    public bool CanFire() {
+        return this.alive && this.ammo > 0 && this.fireTimer <= 0.0;
+    }
+
+    // 开火：扣一发弹药并进入射速冷却。
+    public bool Fire() {
+        if (!this.CanFire()) { return false; }
+        this.ammo = this.ammo - 1;
+        this.fireTimer = ArenaPlayer.FireInterval;
+        return true;
+    }
+
+    // 瞄准某个世界坐标。
+    public void AimAt(double tx, double ty) {
+        double dx = tx - this.x;
+        double dy = ty - this.y;
+        if (dx * dx + dy * dy < 1.0) { return; }
+        this.aim = Math.Atan2(dy, dx);
+    }
+
+    // 移动：输入给方向（模长 ≤ 1），加速度起步、摩擦刹车；冲刺 1.9 倍速
+    // 但持续吃耐力，停手 0.45 秒后耐力才回。
+    public void Move(double dt, double inputX, double inputY, bool sprint) {
+        if (this.fireTimer > 0.0) { this.fireTimer = this.fireTimer - dt; }
+        if (this.hurtFlash > 0.0) { this.hurtFlash = this.hurtFlash - dt; }
+        if (!this.alive) { return; }
+
+        bool moving = inputX != 0.0 || inputY != 0.0;
+        bool running = sprint && moving && this.stamina > 0.0;
+        double top = ArenaPlayer.MaxSpeed;
+        double accel = ArenaPlayer.Accel;
+        if (running) {
+            // 冲刺：加速度与上限一起抬——只抬上限的话，稳态速度由
+            // 加速度/摩擦决定，冲刺根本跑不快。
+            top = ArenaPlayer.MaxSpeed * 1.9;
+            accel = ArenaPlayer.Accel * 1.6;
+            this.stamina = this.stamina - 34.0 * dt;
+            this.sprintIdle = 0.0;
+            if (this.stamina < 0.0) { this.stamina = 0.0; }
+        } else {
+            this.sprintIdle = this.sprintIdle + dt;
+            if (this.sprintIdle > 0.45) {
+                this.stamina = this.stamina + 24.0 * dt;
+                if (this.stamina > ArenaPlayer.MaxStamina) {
+                    this.stamina = ArenaPlayer.MaxStamina;
+                }
+            }
+        }
+
+        double len = Math.Sqrt(inputX * inputX + inputY * inputY);
+        if (len > 0.001) {
+            this.vx = this.vx + (inputX / len) * accel * dt;
+            this.vy = this.vy + (inputY / len) * accel * dt;
+        }
+        double damp = 1.0 - ArenaPlayer.Friction * dt;
+        if (damp < 0.0) { damp = 0.0; }
+        this.vx = this.vx * damp;
+        this.vy = this.vy * damp;
+
+        double sp = Math.Sqrt(this.vx * this.vx + this.vy * this.vy);
+        if (sp > top) {
+            this.vx = this.vx / sp * top;
+            this.vy = this.vy / sp * top;
+        }
+
+        double nx = this.x + this.vx * dt;
+        double ny = this.y + this.vy * dt;
+        double rx;
+        double ry;
+        ArenaWorld.Resolve(nx, ny, ArenaPlayer.Radius, out rx, out ry);
+        // 撞墙/撞掩体：把对应轴的速度清零（贴墙滑行而不是粘住抖动）。
+        if (Math.Abs(rx - nx) > 0.0001) { this.vx = 0.0; }
+        if (Math.Abs(ry - ny) > 0.0001) { this.vy = 0.0; }
+        this.x = rx;
+        this.y = ry;
+    }
+
+    // 受伤（接触伤害或子弹）。
+    public void TakeDamage(int amount) {
+        if (!this.alive) { return; }
+        this.hp = this.hp - amount;
+        this.hurtFlash = 0.25;
+        if (this.hp <= 0) {
+            this.hp = 0;
+            this.alive = false;
+        }
+    }
+
+    // 恢复生命（不超过上限）。
+    public void Heal(int amount) {
+        this.hp = this.hp + amount;
+        if (this.hp > ArenaPlayer.MaxHp) { this.hp = ArenaPlayer.MaxHp; }
+    }
+
+    // 补给期：弹药补满、耐力回满。
+    public void Resupply() {
+        this.ammo = ArenaPlayer.MaxAmmo;
+        this.stamina = ArenaPlayer.MaxStamina;
+    }
+
+    // 当前速度（调试与用例）。
+    public double Speed() {
+        return Math.Sqrt(this.vx * this.vx + this.vy * this.vy);
+    }
+}

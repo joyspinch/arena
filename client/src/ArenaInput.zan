@@ -1,0 +1,26 @@
+// 一帧的输入：移动方向（模长 ≤ 1）、瞄准点、是否开火、是否冲刺。
+// 键盘鼠标（人玩）与自动驾驶（演示/冒烟/用例）产出同一种结构。
+public class ArenaInput {
+    public double moveX;
+    public double moveY;
+    public double aimX;
+    public double aimY;
+    public bool fire;
+    public bool sprint;
+
+    public ArenaInput() {
+        this.moveX = 0.0;
+        this.moveY = 0.0;
+        this.aimX = 480.0;
+        this.aimY = 300.0;
+        this.fire = false;
+        this.sprint = false;
+    }
+
+    public void Clear() {
+        this.moveX = 0.0;
+        this.moveY = 0.0;
+        this.fire = false;
+        this.sprint = false;
+    }
+}

@@ -1,0 +1,98 @@
+using System;
+
+// 裂谷竞技场的地图与碰撞。
+//
+// 地图：960×600，四周 22 像素厚的墙，中部 5 处掩体矩形。碰撞是纯几何
+// （圆 vs 矩形 / 圆 vs 墙内沿），不依赖渲染层——玩法用例可以脱离窗口
+// 直接验证"玩家穿不过墙、敌人也过不去"。
+public class ArenaWorld {
+    public const int MapW = 960;
+    public const int MapH = 600;
+    public const double Wall = 22.0;   // 墙厚（地图内沿）
+
+    // 掩体数量。
+    public static int CoverCount() { return 5; }
+
+    // 第 i 块掩体的矩形（x, y, w, h）——正方形障碍块，贴图 1:1 不变形。
+    public static void CoverRect(int i, out double x, out double y,
+                                 out double w, out double h) {
+        x = 0.0; y = 0.0; w = 0.0; h = 0.0;
+        if (i == 0) { x = 170.0; y = 130.0; w = 84.0; h = 84.0; return; }
+        if (i == 1) { x = 438.0; y = 96.0; w = 66.0; h = 66.0; return; }
+        if (i == 2) { x = 688.0; y = 150.0; w = 92.0; h = 92.0; return; }
+        if (i == 3) { x = 250.0; y = 400.0; w = 70.0; h = 70.0; return; }
+        if (i == 4) { x = 560.0; y = 390.0; w = 88.0; h = 88.0; return; }
+    }
+
+    // 圆与矩形是否相交（圆心到矩形最近点距离 ≤ 半径）。
+    public static bool CircleRect(double cx, double cy, double r,
+                                  double rx, double ry, double rw, double rh) {
+        double nx = cx;
+        if (cx < rx) { nx = rx; }
+        else if (cx > rx + rw) { nx = rx + rw; }
+        double ny = cy;
+        if (cy < ry) { ny = ry; }
+        else if (cy > ry + rh) { ny = ry + rh; }
+        double dx = cx - nx;
+        double dy = cy - ny;
+        return dx * dx + dy * dy <= r * r;
+    }
+
+    // 圆是否越出墙体（跑到地图内沿矩形之外）。
+    public static bool CircleOutsideWalls(double cx, double cy, double r) {
+        if (cx - r < ArenaWorld.Wall) { return true; }
+        if (cy - r < ArenaWorld.Wall) { return true; }
+        if (cx + r > (double)ArenaWorld.MapW - ArenaWorld.Wall) { return true; }
+        if (cy + r > (double)ArenaWorld.MapH - ArenaWorld.Wall) { return true; }
+        return false;
+    }
+
+    // 该位置是否不可通行（撞墙或压在掩体上）。
+    public static bool Blocked(double cx, double cy, double r) {
+        if (ArenaWorld.CircleOutsideWalls(cx, cy, r)) { return true; }
+        int n = ArenaWorld.CoverCount();
+        for (int i = 0; i < n; i = i + 1) {
+            double x; double y; double w; double h;
+            ArenaWorld.CoverRect(i, out x, out y, out w, out h);
+            if (ArenaWorld.CircleRect(cx, cy, r, x, y, w, h)) { return true; }
+        }
+        return false;
+    }
+
+    // 把圆推回可通行区域：先夹回墙内，再沿最小穿透轴推开掩体。
+    // 返回修正后的圆心。
+    public static void Resolve(double cx, double cy, double r,
+                                out double ox, out double oy) {
+        ox = cx;
+        oy = cy;
+        double lo = ArenaWorld.Wall + r;
+        double hiX = (double)ArenaWorld.MapW - ArenaWorld.Wall - r;
+        double hiY = (double)ArenaWorld.MapH - ArenaWorld.Wall - r;
+        if (ox < lo) { ox = lo; }
+        if (ox > hiX) { ox = hiX; }
+        if (oy < lo) { oy = lo; }
+        if (oy > hiY) { oy = hiY; }
+        int n = ArenaWorld.CoverCount();
+        for (int i = 0; i < n; i = i + 1) {
+            double x; double y; double w; double h;
+            ArenaWorld.CoverRect(i, out x, out y, out w, out h);
+            if (!ArenaWorld.CircleRect(ox, oy, r, x, y, w, h)) { continue; }
+            double left = ox - r - x;
+            double right = (x + w) - (ox + r);
+            double top = oy - r - y;
+            double bottom = (y + h) - (oy + r);
+            double m = left;
+            if (right < m) { m = right; }
+            if (top < m) { m = top; }
+            if (bottom < m) { m = bottom; }
+            if (m == left) { ox = x - r - 0.01; }
+            else if (m == right) { ox = x + w + r + 0.01; }
+            else if (m == top) { oy = y - r - 0.01; }
+            else { oy = y + h + r + 0.01; }
+        }
+    }
+
+    // 出生点：地图中心（保证不在掩体上）。
+    public static double SpawnX() { return 480.0; }
+    public static double SpawnY() { return 300.0; }
+}

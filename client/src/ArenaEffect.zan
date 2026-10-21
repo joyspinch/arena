@@ -1,0 +1,40 @@
+using System;
+
+// 爆炸特效：敌人死亡时生成，随时间放大并淡出（渲染层用）。
+public class ArenaEffect {
+    public double x;
+    public double y;
+    public double life;      // 剩余寿命（秒）
+    public double maxLife;
+    public double size;      // 起始尺寸（逻辑像素）
+
+    public ArenaEffect(double x, double y, double size) {
+        this.x = x;
+        this.y = y;
+        this.maxLife = 0.45;
+        this.life = this.maxLife;
+        this.size = size;
+    }
+
+    public void Update(double dt) {
+        this.life = this.life - dt;
+        if (this.life < 0.0) { this.life = 0.0; }
+    }
+
+    public bool Finished() { return this.life <= 0.0; }
+
+    // 当前尺寸（随寿命放大）。
+    public double CurrentSize() {
+        double t = 1.0 - (this.life / this.maxLife);
+        return this.size * (0.55 + 0.65 * t);
+    }
+
+    // 当前不透明度（0..255）。
+    public int Alpha() {
+        double t = this.life / this.maxLife;
+        int a = (int)(t * 255.0);
+        if (a < 0) { a = 0; }
+        if (a > 255) { a = 255; }
+        return a;
+    }
+}

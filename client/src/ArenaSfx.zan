@@ -1,0 +1,54 @@
+using System;
+using Game.Foundation;
+
+// 音效库：加载 assets/sfx/*.wav，按事件播放。
+//
+// 底层是公共包 Game.Foundation.SfxBank（磁盘优先 + 内嵌兜底 + 限频 +
+// 无音频设备静默降级）。这里只声明"这个游戏有哪些音效、什么事件播哪个"。
+public class ArenaSfx {
+    public static string[] Names() {
+        return new string[] {
+            "shoot", "hit", "explode", "hurt", "pickup", "wave", "turret", "gameover"
+        };
+    }
+
+    AudioBus bus;
+    SfxBank bank;
+    public bool enabled;
+
+    public ArenaSfx() {
+        this.enabled = true;
+        this.bus = new AudioBus();
+        this.bank = new SfxBank(this.bus);
+        this.bank.SetCooldown(35);
+        this.bank.LoadAll("assets/sfx", ArenaSfx.Names());
+    }
+
+    // 已加载的音效数量（诊断用）。
+    public int Loaded() {
+        if (this.bank == null) { return 0; }
+        return this.bank.Count();
+    }
+
+    void Play(string name, double gain, int cooldown) {
+        if (!this.enabled || this.bank == null) { return; }
+        this.bank.Play(name, gain, cooldown);
+    }
+
+    // 玩家开火。
+    public void Shoot() { this.Play("shoot", 0.45, 40); }
+    // 子弹命中敌人。
+    public void Hit() { this.Play("hit", 0.5, 30); }
+    // 敌人死亡爆炸。
+    public void Explode() { this.Play("explode", 0.6, 60); }
+    // 玩家受伤。
+    public void Hurt() { this.Play("hurt", 0.6, 120); }
+    // 拾取弹药/血包。
+    public void Pickup() { this.Play("pickup", 0.5, 60); }
+    // 新一波开始。
+    public void Wave() { this.Play("wave", 0.5, 200); }
+    // 炮塔开火。
+    public void Turret() { this.Play("turret", 0.4, 90); }
+    // 玩家阵亡。
+    public void GameOver() { this.Play("gameover", 0.7, 500); }
+}

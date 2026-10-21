@@ -5,32 +5,38 @@ using System.Json;
 using Game.Foundation;
 using Game.Foundation.Gui;
 
-// 裂谷竞技 · ARENA 的外壳：存档（最高分 + 局数）+ 设置（音效/难度/速度）
-// + 设置浮层。
+// 裂谷竞技 · ARENA 的外壳：存档（最高波数 / 最高分 / 最高连杀 / 局数）
+// + 设置（音效 / 难度 / 自动驾驶）+ 设置浮层。
 //
-// 存档基座（原子写 + 备份回退 + 版本号）与设置逻辑层（档位计算 + 校验 +
-// 落盘）都在公共包 Game.Foundation 里；这里只留"这个游戏存什么、设置有哪
-// 几项"——换个游戏换的正是这两行。
+// 存档基座（原子写 + 备份回退 + 版本号）与设置逻辑层在公共包
+// Game.Foundation 里；这里只留"这个游戏存什么、设置有哪几项"。
 public class GameShell {
     GameSaveStore store;
     GameSettings settings;
     SettingsModel model;
     SettingsOverlay overlay;
-    int best;
-    int runs;
+    int bestWave;     // 历史最高波数
+    int bestScore;    // 历史最高分
+    int bestStreak;   // 历史最高连杀
+    int runs;         // 局数（每启动一次 +1）
 
     public GameShell() {
         string dir = GameShell.SaveDir();
         Directory.CreateDirectory(dir);
-        this.store = new GameSaveStore(dir, "arena", 1);
+        this.store = new GameSaveStore(dir, "arena", 2);
         this.settings = new GameSettings().At(dir + "/settings.json");
+        // 音效开关。
         this.settings.AddBool("sound", "音效", true);
+        // 难度：决定敌人速度与血量的倍率（1 轻松 / 2 标准 / 3 硬核）。
         this.settings.AddIntChoice("difficulty", "难度", 2,
             new List<int> { 1, 2, 3 });
+        // 自动驾驶：把自己交给 AI（演示 / 观战）。
+        this.settings.AddBool("autoplay", "自动驾驶", false);
         this.settings.Load();
         this.model = new SettingsModel(this.settings);
         this.overlay = new SettingsOverlay(this.model);
         this.overlay.SetTitle("设置");
+        this.overlay.SetCloseText("关闭");
         this.Load();
     }
 
@@ -45,35 +51,60 @@ public class GameShell {
     }
 
     public SettingsOverlay Overlay() { return this.overlay; }
-    public int Best() { return this.best; }
+    public int BestWave() { return this.bestWave; }
+    public int BestScore() { return this.bestScore; }
+    public int BestStreak() { return this.bestStreak; }
     public int Runs() { return this.runs; }
 
-    // 当前速度档（1/2/3）——游戏逻辑读它调敌人速度。
-    public int SpeedLevel() {
+    // 当前难度档（1/2/3）——敌人速度与血量的倍率。
+    public int Difficulty() {
         if (this.settings == null) { return 2; }
         return this.settings.GetInt("difficulty");
+    }
+
+    // 是否开启音效。
+    public bool Sound() {
+        if (this.settings == null) { return true; }
+        return this.settings.GetBool("sound");
+    }
+
+    // 是否自动驾驶。
+    public bool AutoPlay() {
+        if (this.settings == null) { return false; }
+        return this.settings.GetBool("autoplay");
     }
 
     // 读档：没有存档就用默认值，不报错。
     public void Load() {
         JsonValue data = this.store.Load(0);
-        if (data == null) { this.best = 0; this.runs = 0; return; }
-        this.best = data.Int("best", 0);
+        if (data == null) {
+            this.bestWave = 0;
+            this.bestScore = 0;
+            this.bestStreak = 0;
+            this.runs = 0;
+            return;
+        }
+        this.bestWave = data.Int("bestWave", 0);
+        this.bestScore = data.Int("bestScore", 0);
+        this.bestStreak = data.Int("bestStreak", 0);
         this.runs = data.Int("runs", 0);
     }
 
-    // 存档：最高分只增不减，局数 +1。
-    public void Save() {
-        JsonValue data = JsonValue.NewObject();
-        data.PutInt("best", this.best);
-        data.PutInt("runs", this.runs + 1);
-        this.runs = this.runs + 1;
-        this.store.Save(0, data);
+    // 记一局成绩：最高波数 / 最高分 / 最高连杀只增不减。
+    public void RecordRun(int wave, int score, int streak) {
+        if (wave > this.bestWave) { this.bestWave = wave; }
+        if (score > this.bestScore) { this.bestScore = score; }
+        if (streak > this.bestStreak) { this.bestStreak = streak; }
     }
 
-    // 一局结束：更新最高分并存档。
-    public void EndRun(int score) {
-        if (score > this.best) { this.best = score; }
-        this.Save();
+    // 存档：局数 +1 后落盘。
+    public void Save() {
+        this.runs = this.runs + 1;
+        JsonValue data = JsonValue.NewObject();
+        data.PutInt("bestWave", this.bestWave);
+        data.PutInt("bestScore", this.bestScore);
+        data.PutInt("bestStreak", this.bestStreak);
+        data.PutInt("runs", this.runs);
+        this.store.Save(0, data);
     }
 }

@@ -1,0 +1,413 @@
+using System;
+using System.Collections.Generic;
+using Game.Kit;
+
+// 裂谷竞技玩法用例：波次规则、碰撞、玩家、子弹与敌人、结算统计、
+// 补给期、掉落拾取，以及多种子的完整对局。
+//
+// 判据：全部断言通过则打印 "arena_test OK"。
+public class ArenaTest {
+    static int failures = 0;
+    static int checks = 0;
+
+    static void Ok(bool cond, string label) {
+        checks = checks + 1;
+        if (!cond) {
+            failures = failures + 1;
+            Console.WriteLine("FAIL " + label);
+        }
+    }
+
+    static void Eq(int got, int want, string label) {
+        Ok(got == want, label + " got=" + Convert.ToString(got)
+            + " want=" + Convert.ToString(want));
+    }
+
+    static void EqS(string got, string want, string label) {
+        Ok(got == want, label + " got=" + got + " want=" + want);
+    }
+
+    static void Near(double got, double want, double tol, string label) {
+        Ok(Math.Abs(got - want) <= tol, label + " got=" + Convert.ToString(got)
+            + " want=" + Convert.ToString(want));
+    }
+
+    // ----- 波次规则 -------------------------------------------------------
+
+    static void TestWaveCount() {
+        Eq(ArenaWave.EnemyCount(1), 3, "第 1 波 3 个敌人");
+        Eq(ArenaWave.EnemyCount(2), 4, "第 2 波 4 个敌人");
+        Eq(ArenaWave.EnemyCount(3), 5, "第 3 波 5 个敌人");
+        Eq(ArenaWave.EnemyCount(5), 7, "第 5 波 7 个敌人");
+        Eq(ArenaWave.EnemyCount(10), 12, "第 10 波 12 个敌人");
+        Eq(ArenaWave.EnemyCount(17), 19, "第 17 波 19 个敌人");
+        Eq(ArenaWave.EnemyCount(18), 20, "第 18 波到上限 20");
+        Eq(ArenaWave.EnemyCount(19), 20, "第 19 波仍是 20（上限）");
+        Eq(ArenaWave.EnemyCount(99), 20, "第 99 波仍是 20（上限）");
+        bool growing = true;
+        int prev = 0;
+        for (int w = 1; w <= 20; w = w + 1) {
+            int n = ArenaWave.EnemyCount(w);
+            if (n < prev) { growing = false; }
+            prev = n;
+        }
+        Ok(growing, "波次敌人数量递增不回落");
+    }
+
+    static void TestUnlockRules() {
+        Eq(ArenaEnemy.UnlockWave(ArenaEnemy.Chaser), 2, "冲锋兵第 2 波解锁");
+        Eq(ArenaEnemy.UnlockWave(ArenaEnemy.Turret), 4, "炮塔第 4 波解锁");
+        Eq(ArenaEnemy.UnlockWave(ArenaEnemy.Brute), 6, "重装兵第 6 波解锁");
+        EqS(ArenaEnemy.Name(ArenaEnemy.Chaser), "冲锋兵", "冲锋兵名字");
+        EqS(ArenaEnemy.Name(ArenaEnemy.Turret), "炮塔", "炮塔名字");
+        EqS(ArenaEnemy.Name(ArenaEnemy.Brute), "重装兵", "重装兵名字");
+    }
+
+    static void TestRoster() {
+        Rng rng = Rng.Seed(20261021L);
+        List<int> r1 = ArenaWave.Roster(1, rng);
+        Eq(r1.Count, 3, "第 1 波编排 3 个");
+        bool allChaser = true;
+        for (int i = 0; i < r1.Count; i = i + 1) {
+            if (r1[i] != ArenaEnemy.Chaser) { allChaser = false; }
+        }
+        Ok(allChaser, "第 1 波是教学波：清一色冲锋兵");
+
+        // 第 3 波不该出现炮塔/重装兵（未解锁）。
+        bool earlyTurret = false;
+        bool earlyBrute = false;
+        bool sawTurret = false;
+        bool sawBrute = false;
+        for (int s = 0; s < 24; s = s + 1) {
+            Rng r = Rng.Seed(1000L + (long)s);
+            List<int> r3 = ArenaWave.Roster(3, r);
+            Eq(r3.Count, ArenaWave.EnemyCount(3), "第 3 波编排数量 = 2+N");
+            for (int i = 0; i < r3.Count; i = i + 1) {
+                if (r3[i] == ArenaEnemy.Turret) { earlyTurret = true; }
+                if (r3[i] == ArenaEnemy.Brute) { earlyBrute = true; }
+            }
+            List<int> r4 = ArenaWave.Roster(4, r);
+            for (int i = 0; i < r4.Count; i = i + 1) {
+                if (r4[i] == ArenaEnemy.Turret) { sawTurret = true; }
+            }
+            List<int> r5 = ArenaWave.Roster(5, r);
+            for (int i = 0; i < r5.Count; i = i + 1) {
+                if (r5[i] == ArenaEnemy.Brute) { earlyBrute = true; }
+            }
+            List<int> r6 = ArenaWave.Roster(6, r);
+            for (int i = 0; i < r6.Count; i = i + 1) {
+                if (r6[i] == ArenaEnemy.Brute) { sawBrute = true; }
+            }
+        }
+        Ok(!earlyTurret, "炮塔第 3 波不会出现");
+        Ok(!earlyBrute, "重装兵第 5 波之前不会出现");
+        Ok(sawTurret, "炮塔第 4 波起会出现");
+        Ok(sawBrute, "重装兵第 6 波起会出现");
+
+        // 同种子结果稳定。
+        Rng a = Rng.Seed(777L);
+        Rng b = Rng.Seed(777L);
+        List<int> ra = ArenaWave.Roster(7, a);
+        List<int> rb = ArenaWave.Roster(7, b);
+        bool same = ra.Count == rb.Count;
+        if (same) {
+            for (int i = 0; i < ra.Count; i = i + 1) {
+                if (ra[i] != rb[i]) { same = false; }
+            }
+        }
+        Ok(same, "同种子的编排稳定可复现");
+    }
+
+    // ----- 碰撞 -----------------------------------------------------------
+
+    static void TestCollision() {
+        double cx; double cy; double cw; double ch;
+        ArenaWorld.CoverRect(0, out cx, out cy, out cw, out ch);
+        Ok(ArenaWorld.CircleRect(cx + 10.0, cy + 10.0, 12.0, cx, cy, cw, ch),
+            "圆与掩体相交");
+        Ok(!ArenaWorld.CircleRect(cx - 60.0, cy - 60.0, 10.0, cx, cy, cw, ch),
+            "圆与掩体不相交");
+        Ok(ArenaWorld.CircleOutsideWalls(5.0, 300.0, 14.0),
+            "越出左墙");
+        Ok(ArenaWorld.CircleOutsideWalls(950.0, 300.0, 14.0),
+            "越出右墙");
+        Ok(!ArenaWorld.CircleOutsideWalls(480.0, 300.0, 14.0),
+            "场地中心不越墙");
+        Ok(ArenaWorld.Blocked(cx + 10.0, cy + 10.0, 14.0), "掩体上不可通行");
+        Ok(!ArenaWorld.Blocked(480.0, 300.0, 14.0), "空地可通行");
+        Ok(ArenaWorld.Blocked(4.0, 300.0, 14.0), "墙外不可通行");
+
+        // Resolve 把圆推出掩体与墙。
+        double rx; double ry;
+        ArenaWorld.Resolve(cx + 10.0, cy + 10.0, 14.0, out rx, out ry);
+        Ok(!ArenaWorld.CircleRect(rx, ry, 14.0, cx, cy, cw, ch),
+            "Resolve 把圆推出掩体");
+        ArenaWorld.Resolve(-30.0, -30.0, 14.0, out rx, out ry);
+        Ok(!ArenaWorld.CircleOutsideWalls(rx, ry, 14.0), "Resolve 把圆拉回墙内");
+        Near(rx, ArenaWorld.Wall + 14.0, 0.01, "Resolve 后贴墙位置正确");
+    }
+
+    // ----- 玩家 -----------------------------------------------------------
+
+    static void TestPlayer() {
+        ArenaPlayer p = new ArenaPlayer();
+        Eq(p.hp, 100, "初始血量 100");
+        Eq(p.ammo, 60, "初始弹药 60");
+        Ok(p.alive, "开局存活");
+
+        // 开火扣弹药。
+        Ok(p.Fire(), "第一枪打得出去");
+        Eq(p.ammo, 59, "开火后弹药 -1");
+        p.fireTimer = 0.0;
+        Ok(p.Fire(), "冷却后能继续开火");
+        Eq(p.ammo, 58, "第二枪后弹药 -1");
+
+        // 弹药打空不能连发。
+        p.ammo = 0;
+        p.fireTimer = 0.0;
+        Ok(!p.Fire(), "没弹药打不出枪");
+        Eq(p.ammo, 0, "没弹药不扣成负数");
+
+        // 加速度与摩擦。
+        ArenaPlayer m = new ArenaPlayer();
+        m.Move(0.016, 1.0, 0.0, false);
+        Ok(m.Speed() > 1.0, "有输入就加速");
+        double s1 = m.Speed();
+        for (int i = 0; i < 30; i = i + 1) { m.Move(0.016, 0.0, 0.0, false); }
+        Ok(m.Speed() < s1, "松手后摩擦减速");
+
+        // 冲刺吃耐力、速度更快。
+        ArenaPlayer r = new ArenaPlayer();
+        r.Move(0.016, 1.0, 0.0, false);
+        for (int i = 0; i < 60; i = i + 1) { r.Move(0.016, 1.0, 0.0, false); }
+        double normal = r.Speed();
+        ArenaPlayer sp = new ArenaPlayer();
+        for (int i = 0; i < 60; i = i + 1) { sp.Move(0.016, 1.0, 0.0, true); }
+        Ok(sp.Speed() > normal, "冲刺速度更快");
+        Ok(sp.stamina < 100.0, "冲刺消耗耐力");
+
+        // 撞墙：贴着左墙一直往左走也穿不过去。
+        ArenaPlayer w = new ArenaPlayer();
+        w.Reset(30.0, 300.0);
+        for (int i = 0; i < 200; i = i + 1) { w.Move(0.016, -1.0, 0.0, false); }
+        Ok(w.x >= ArenaWorld.Wall + ArenaPlayer.Radius - 0.01,
+            "玩家穿不过左墙 x=" + Convert.ToString(w.x));
+
+        // 撞掩体：正对着掩体走也压不进去。
+        double cx; double cy; double cw; double ch;
+        ArenaWorld.CoverRect(0, out cx, out cy, out cw, out ch);
+        ArenaPlayer c = new ArenaPlayer();
+        c.Reset(cx - 10.0, cy + cw / 2.0);
+        for (int i = 0; i < 200; i = i + 1) { c.Move(0.016, 1.0, 0.0, false); }
+        Ok(c.x <= cx - ArenaPlayer.Radius + 0.01,
+            "玩家压不进掩体 x=" + Convert.ToString(c.x));
+        Ok(!ArenaWorld.Blocked(c.x, c.y, ArenaPlayer.Radius),
+            "掩体推回后玩家仍在可通行区");
+
+        // 补给与治疗。
+        ArenaPlayer h = new ArenaPlayer();
+        h.hp = 50;
+        h.ammo = 3;
+        h.stamina = 0.0;
+        h.Heal(25);
+        Eq(h.hp, 75, "恢复 25 HP");
+        h.Heal(100);
+        Eq(h.hp, 100, "治疗不超过上限");
+        h.Resupply();
+        Eq(h.ammo, 99, "补给补满弹药");
+        Near(h.stamina, 100.0, 0.001, "补给回满耐力");
+
+        // 受伤归零即阵亡。
+        ArenaPlayer d = new ArenaPlayer();
+        d.TakeDamage(40);
+        Eq(d.hp, 60, "受伤扣血");
+        d.TakeDamage(999);
+        Eq(d.hp, 0, "血量不为负");
+        Ok(!d.alive, "血量归零即阵亡");
+    }
+
+    // ----- 子弹与敌人 -----------------------------------------------------
+
+    static void TestBulletAndEnemy() {
+        ArenaBullet b = new ArenaBullet(100.0, 100.0, 0.0, 100.0, 10, true);
+        b.Update(0.5);
+        Near(b.x, 150.0, 0.001, "子弹按速度前进");
+        Ok(b.HitsCircle(150.0, 100.0, 4.0), "子弹命中判定");
+        Ok(!b.HitsCircle(200.0, 100.0, 4.0), "子弹不命中远处");
+
+        ArenaBullet outb = new ArenaBullet(950.0, 100.0, 0.0, 400.0, 10, true);
+        outb.Update(0.5);
+        Ok(outb.dead, "出界的子弹消亡");
+
+        ArenaEnemy chaser = new ArenaEnemy(ArenaEnemy.Chaser, 100.0, 100.0, 2);
+        Eq(chaser.maxHp, 30, "冲锋兵血少");
+        ArenaEnemy turret = new ArenaEnemy(ArenaEnemy.Turret, 100.0, 100.0, 2);
+        Eq(turret.maxHp, 55, "炮塔血量居中");
+        ArenaEnemy brute = new ArenaEnemy(ArenaEnemy.Brute, 100.0, 100.0, 2);
+        Eq(brute.maxHp, 120, "重装兵血厚");
+        Ok(brute.contactDamage > chaser.contactDamage, "重装兵接触伤害更高");
+        Ok(chaser.speed > brute.speed, "冲锋兵比重装兵快");
+
+        Ok(!chaser.Hurt(10), "冲锋兵挨一枪没死");
+        Eq(chaser.hp, 20, "受伤扣血");
+        Ok(chaser.Hurt(50), "血量归零即死");
+        Ok(chaser.dead, "死标记置位");
+
+        // 难度档放大敌人强度。
+        ArenaEnemy easy = new ArenaEnemy(ArenaEnemy.Chaser, 0.0, 0.0, 1);
+        ArenaEnemy hard = new ArenaEnemy(ArenaEnemy.Chaser, 0.0, 0.0, 3);
+        Ok(hard.speed > easy.speed, "难度档提高敌人速度");
+    }
+
+    // ----- 战斗与统计 -----------------------------------------------------
+
+    // 清场（只留一只指定的敌人）。
+    static ArenaGame MakeArena(long seed) {
+        ArenaGame g = new ArenaGame();
+        g.NewGame(seed);
+        g.enemies.Clear();
+        g.pendingKinds.Clear();
+        return g;
+    }
+
+    static void TestCombat() {
+        ArenaGame g = MakeArena(4242L);
+        Eq(g.screen, ArenaGame.ScreenPlay, "开局进游戏中画面");
+        Eq(g.waveReached, 1, "开局是第 1 波");
+        Eq(g.kills, 0, "开局零击杀");
+        Eq(g.shots, 0, "开局零射击");
+        Near(g.Accuracy(), 0.0, 0.0001, "开局命中率 0");
+
+        // 放一只敌人在玩家正右方，开一枪。
+        ArenaEnemy e = new ArenaEnemy(ArenaEnemy.Chaser, g.player.x + 120.0, g.player.y, 2);
+        g.enemies.Add(e);
+        ArenaInput input = new ArenaInput();
+        input.aimX = e.x;
+        input.aimY = e.y;
+        input.fire = true;
+        g.Step(16.0, input);
+        Eq(g.shots, 1, "开一枪计数 +1");
+        Eq(g.bullets.Count, 1, "场上多了一颗子弹");
+        input.fire = false;
+        for (int i = 0; i < 40; i = i + 1) { g.Step(16.0, input); }
+        Eq(g.hits, 1, "子弹命中敌人");
+        Near(g.Accuracy(), 1.0, 0.0001, "命中率 = 命中/射击");
+        Eq(e.hp, e.maxHp - ArenaPlayer.BulletDamage, "敌人按弹伤扣血");
+        Eq(g.enemies.Count, 1, "敌人还活着");
+
+        // 再打一枪打死它。
+        e.hp = ArenaPlayer.BulletDamage;
+        input.fire = true;
+        g.Step(16.0, input);
+        input.fire = false;
+        for (int i = 0; i < 40; i = i + 1) { g.Step(16.0, input); }
+        Eq(g.kills, 1, "击杀 +1");
+        Eq(g.enemies.Count, 0, "死掉的敌人被移除");
+        Ok(g.maxStreak >= 1, "连杀计数");
+        Ok(g.pickups.Count > 0, "击杀掉落弹药");
+    }
+
+    static void TestGameOver() {
+        ArenaGame g = MakeArena(99L);
+        g.player.TakeDamage(999);
+        Eq(g.player.hp, 0, "血量归零");
+        ArenaInput input = new ArenaInput();
+        g.Step(16.0, input);
+        Ok(g.gameOver, "血量归零即判负");
+        Eq(g.screen, ArenaGame.ScreenResult, "进结算画面");
+        Ok(g.Score() >= 0, "结算有分数");
+    }
+
+    static void TestSupply() {
+        ArenaGame g = MakeArena(2024L);
+        g.player.hp = 50;
+        g.player.ammo = 5;
+        g.player.stamina = 0.0;
+        ArenaInput input = new ArenaInput();
+        // 本波清空（场上无敌人、无待出场）→ 进入补给期。
+        g.Step(16.0, input);
+        Eq(g.wave.supplyLeftMs, ArenaWave.SupplyMs, "清波后进入 3 秒补给期");
+        Ok(!g.wave.waveRunning, "补给期本波标记清掉");
+        // 补给期走完：弹药补满、恢复 25 HP、耐力回满、开下一波。
+        g.Step((double)ArenaWave.SupplyMs + 50.0, input);
+        Eq(g.player.ammo, ArenaPlayer.MaxAmmo, "补给期补满弹药");
+        Eq(g.player.hp, 75, "补给期恢复 25 HP");
+        Near(g.player.stamina, 100.0, 0.001, "补给期回满耐力");
+        Eq(g.waveReached, 2, "补给后开第 2 波");
+        Eq(g.wave.wave, 2, "波次计数推进");
+        Eq(g.pendingKinds.Count, ArenaWave.EnemyCount(2), "第 2 波待出场数量正确");
+    }
+
+    static void TestPickup() {
+        ArenaGame g = MakeArena(31337L);
+        g.player.ammo = 10;
+        g.pickups.Add(new ArenaPickup(g.player.x, g.player.y, ArenaPickup.Ammo, 20));
+        ArenaInput input = new ArenaInput();
+        g.Step(16.0, input);
+        Eq(g.player.ammo, 30, "拾取弹药箱 +20");
+        Eq(g.pickups.Count, 0, "拾取后掉落物移除");
+
+        g.player.hp = 50;
+        g.pickups.Add(new ArenaPickup(g.player.x, g.player.y, ArenaPickup.Health, 20));
+        g.Step(16.0, input);
+        Eq(g.player.hp, 70, "拾取医疗包 +20 HP");
+    }
+
+    // ----- 完整对局 -------------------------------------------------------
+
+    static void TestFullMatch() {
+        long[] seeds = new long[] { 13579L, 24680L, 20261021L };
+        for (int s = 0; s < seeds.Length; s = s + 1) {
+            ArenaGame g = new ArenaGame();
+            g.autoPlay = true;
+            g.difficulty = 2;
+            g.NewGame(seeds[s]);
+            int steps = 0;
+            while (!g.gameOver && steps < 60000) {
+                ArenaInput input = g.AutoInput();
+                g.Step(16.0, input);
+                steps = steps + 1;
+            }
+            Ok(g.gameOver, "种子 " + Convert.ToString(seeds[s]) + " 的对局能走到结束 steps="
+                + Convert.ToString(steps));
+            Eq(g.screen, ArenaGame.ScreenResult, "结束后进结算画面");
+            // 状态自洽。
+            Ok(g.player.hp >= 0 && g.player.hp <= 100, "玩家血量在合法区间 hp="
+                + Convert.ToString(g.player.hp));
+            Ok(g.kills >= 0, "击杀数非负");
+            Ok(g.shots >= g.hits, "命中数不超过射击数");
+            Near(g.Accuracy(), (double)g.hits / (double)(g.shots > 0 ? g.shots : 1),
+                0.0001, "命中率自洽");
+            Ok(g.maxStreak >= 1, "打到了连杀");
+            Ok(g.waveReached >= 1, "至少打到第 1 波");
+            Ok(g.elapsedMs > 0.0, "用时为正");
+            Ok(g.Score() > 0, "得分大于 0");
+            for (int i = 0; i < g.enemies.Count; i = i + 1) {
+                ArenaEnemy e = g.enemies[i];
+                Ok(e.hp > 0 && e.hp <= e.maxHp, "残敌血量在合法区间");
+                Ok(!ArenaWorld.Blocked(e.x, e.y, e.radius), "敌人不在障碍里");
+            }
+        }
+    }
+
+    static void Main() {
+        TestWaveCount();
+        TestUnlockRules();
+        TestRoster();
+        TestCollision();
+        TestPlayer();
+        TestBulletAndEnemy();
+        TestCombat();
+        TestGameOver();
+        TestSupply();
+        TestPickup();
+        TestFullMatch();
+        Console.WriteLine("arena_test checks=" + Convert.ToString(checks)
+            + " failures=" + Convert.ToString(failures));
+        if (failures > 0) {
+            Console.WriteLine("arena_test FAILED");
+            return;
+        }
+        Console.WriteLine("arena_test OK");
+    }
+}

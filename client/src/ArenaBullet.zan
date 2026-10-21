@@ -1,0 +1,46 @@
+using System;
+
+// 子弹：玩家与炮塔共用的弹体，靠 fromPlayer 区分阵营。
+public class ArenaBullet {
+    public double x;
+    public double y;
+    public double vx;
+    public double vy;
+    public int damage;
+    public bool fromPlayer;
+    public double life;   // 剩余寿命（秒）
+    public double radius;
+    public bool dead;
+
+    public ArenaBullet(double x, double y, double angle, double speed,
+                        int damage, bool fromPlayer) {
+        this.x = x;
+        this.y = y;
+        this.vx = Math.Cos(angle) * speed;
+        this.vy = Math.Sin(angle) * speed;
+        this.damage = damage;
+        this.fromPlayer = fromPlayer;
+        this.life = 1.4;
+        this.radius = 4.0;
+        this.dead = false;
+    }
+
+    // 推进一帧；出界或寿命耗尽即消亡。
+    public void Update(double dt) {
+        this.x = this.x + this.vx * dt;
+        this.y = this.y + this.vy * dt;
+        this.life = this.life - dt;
+        if (this.life <= 0.0) { this.dead = true; }
+        if (this.x < 0.0 || this.y < 0.0) { this.dead = true; }
+        if (this.x > (double)ArenaWorld.MapW) { this.dead = true; }
+        if (this.y > (double)ArenaWorld.MapH) { this.dead = true; }
+    }
+
+    // 是否命中某个圆（敌人或玩家）。
+    public bool HitsCircle(double cx, double cy, double r) {
+        double dx = this.x - cx;
+        double dy = this.y - cy;
+        double rr = this.radius + r;
+        return dx * dx + dy * dy <= rr * rr;
+    }
+}

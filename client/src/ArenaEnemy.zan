@@ -1,0 +1,147 @@
+using System;
+
+// 三种敌人：冲锋兵（快脆）、炮塔（远程定点射击）、重装兵（慢厚高伤）。
+//
+// 每种都有自己的行为参数，difficulty（设置里的难度档 1/2/3）按比例放大
+// 速度与血量——设置不是摆设。
+public class ArenaEnemy {
+    public const int Chaser = 0;
+    public const int Turret = 1;
+    public const int Brute = 2;
+
+    public const double TurretRange = 260.0;
+    public const double TurretFireInterval = 1.7;
+
+    public int kind;
+    public double x;
+    public double y;
+    public double vx;
+    public double vy;
+    public int hp;
+    public int maxHp;
+    public double radius;
+    public double speed;
+    public int contactDamage;
+    public int scoreValue;
+    public double fireTimer;     // 炮塔开火冷却
+    public double contactTimer;  // 接触伤害冷却
+    public double hitFlash;      // 受击闪烁
+    public double aim;           // 朝向玩家的角度
+    public bool dead;
+
+    public ArenaEnemy(int kind, double x, double y, int difficulty) {
+        this.kind = kind;
+        this.x = x;
+        this.y = y;
+        this.vx = 0.0;
+        this.vy = 0.0;
+        this.fireTimer = 0.8;
+        this.contactTimer = 0.0;
+        this.hitFlash = 0.0;
+        this.dead = false;
+        this.aim = 0.0;
+        int diff = difficulty;
+        if (diff < 1) { diff = 1; }
+        if (diff > 3) { diff = 3; }
+        double scale = 1.0 + 0.15 * (double)(diff - 1);
+        if (kind == ArenaEnemy.Turret) {
+            this.maxHp = 55;
+            this.radius = 19.0;
+            this.speed = 52.0 * scale;
+            this.contactDamage = 6;
+            this.scoreValue = 180;
+        } else if (kind == ArenaEnemy.Brute) {
+            this.maxHp = 120;
+            this.radius = 26.0;
+            this.speed = 46.0 * scale;
+            this.contactDamage = 22;
+            this.scoreValue = 300;
+        } else {
+            this.maxHp = 30;
+            this.radius = 16.0;
+            this.speed = 118.0 * scale;
+            this.contactDamage = 8;
+            this.scoreValue = 100;
+        }
+        this.hp = this.maxHp;
+    }
+
+    // 该兵种进入混编的解锁波次：冲锋兵第 2 波、炮塔第 4 波、重装兵第 6 波。
+    // （第 1 波是教学波，只有冲锋兵。）
+    public static int UnlockWave(int kind) {
+        if (kind == ArenaEnemy.Turret) { return 4; }
+        if (kind == ArenaEnemy.Brute) { return 6; }
+        return 2;
+    }
+
+    // 兵种中文名。
+    public static string Name(int kind) {
+        if (kind == ArenaEnemy.Turret) { return "炮塔"; }
+        if (kind == ArenaEnemy.Brute) { return "重装兵"; }
+        return "冲锋兵";
+    }
+
+    // 与玩家的距离。
+    public double DistanceTo(ArenaPlayer player) {
+        double dx = player.x - this.x;
+        double dy = player.y - this.y;
+        return Math.Sqrt(dx * dx + dy * dy);
+    }
+
+    // 行为推进：冲锋兵直线追、炮塔缓慢逼近射程、重装兵慢速压上。
+    public void Update(double dt, ArenaPlayer player) {
+        if (this.dead) { return; }
+        if (this.hitFlash > 0.0) { this.hitFlash = this.hitFlash - dt; }
+        if (this.fireTimer > 0.0) { this.fireTimer = this.fireTimer - dt; }
+        if (this.contactTimer > 0.0) { this.contactTimer = this.contactTimer - dt; }
+
+        double dx = player.x - this.x;
+        double dy = player.y - this.y;
+        double dist = Math.Sqrt(dx * dx + dy * dy);
+        if (dist > 0.001) {
+            this.aim = Math.Atan2(dy, dx);
+        }
+
+        if (this.kind == ArenaEnemy.Turret) {
+            if (dist > ArenaEnemy.TurretRange) {
+                this.vx = dx / dist * this.speed;
+                this.vy = dy / dist * this.speed;
+            } else {
+                this.vx = this.vx * 0.82;
+                this.vy = this.vy * 0.82;
+            }
+        } else {
+            this.vx = dx / dist * this.speed;
+            this.vy = dy / dist * this.speed;
+        }
+
+        double nx = this.x + this.vx * dt;
+        double ny = this.y + this.vy * dt;
+        double rx;
+        double ry;
+        ArenaWorld.Resolve(nx, ny, this.radius, out rx, out ry);
+        this.x = rx;
+        this.y = ry;
+    }
+
+    // 炮塔是否该开火（冷却好了且玩家在射程内）。开火由调用方扣冷却。
+    public bool WantsFire(ArenaPlayer player) {
+        if (this.kind != ArenaEnemy.Turret) { return false; }
+        if (this.dead) { return false; }
+        if (this.fireTimer > 0.0) { return false; }
+        return this.DistanceTo(player) <= ArenaEnemy.TurretRange;
+    }
+
+    // 受到伤害；返回是否被打死。
+    public bool Hurt(int amount) {
+        if (this.dead) { return false; }
+        this.hp = this.hp - amount;
+        this.hitFlash = 0.12;
+        if (this.hp <= 0) {
+            this.hp = 0;
+            this.dead = true;
+            return true;
+        }
+        return false;
+    }
+}

@@ -1,0 +1,371 @@
+using System;
+using System.Collections.Generic;
+using Game.Kit;
+
+// 裂谷竞技的核心玩法：状态机（菜单 / 游戏中 / 结算）+ 波次推进 + 战斗结算。
+//
+// 这一层是纯逻辑，不碰画布：渲染在 ArenaView，输入在 ArenaApp，玩法用例
+// 直接驱动本类（连上自动驾驶就能把整局跑完）。
+public class ArenaGame {
+    public const int ScreenMenu = 0;
+    public const int ScreenPlay = 1;
+    public const int ScreenResult = 2;
+
+    public int screen;
+    public ArenaPlayer player;
+    public List<ArenaEnemy> enemies;
+    public List<ArenaBullet> bullets;
+    public List<ArenaPickup> pickups;
+    public List<ArenaEffect> effects;
+    public List<int> pendingKinds;
+    public ArenaWave wave;
+    public Rng rng;
+    public ArenaSfx sfx;
+
+    public int difficulty;
+    public bool autoPlay;
+
+    // 本局统计
+    public int kills;
+    public int shots;
+    public int hits;
+    public int streak;
+    public int maxStreak;
+    public int waveReached;
+    public double elapsedMs;
+    public bool gameOver;
+
+    int spawnTimerMs;
+
+    public ArenaGame() {
+        this.rng = Rng.Seed(20261021L);
+        this.wave = new ArenaWave();
+        this.player = new ArenaPlayer();
+        this.enemies = new List<ArenaEnemy>();
+        this.bullets = new List<ArenaBullet>();
+        this.pickups = new List<ArenaPickup>();
+        this.effects = new List<ArenaEffect>();
+        this.pendingKinds = new List<int>();
+        this.difficulty = 2;
+        this.autoPlay = false;
+        this.screen = ArenaGame.ScreenMenu;
+        this.ResetStats();
+    }
+
+    void ResetStats() {
+        this.kills = 0;
+        this.shots = 0;
+        this.hits = 0;
+        this.streak = 0;
+        this.maxStreak = 0;
+        this.waveReached = 0;
+        this.elapsedMs = 0.0;
+        this.gameOver = false;
+        this.spawnTimerMs = 0;
+    }
+
+    // 开一局新游戏（指定随机种子；同种子结果可复现）。
+    public void NewGame(long seed) {
+        this.rng = Rng.Seed(seed);
+        this.enemies.Clear();
+        this.bullets.Clear();
+        this.pickups.Clear();
+        this.effects.Clear();
+        this.pendingKinds.Clear();
+        this.wave.Reset();
+        this.player.Reset(ArenaWorld.SpawnX(), ArenaWorld.SpawnY());
+        this.ResetStats();
+        this.screen = ArenaGame.ScreenPlay;
+        this.StartWave(1);
+    }
+
+    // 开一波：定下兵种编排。
+    public void StartWave(int n) {
+        this.wave.Begin(n);
+        this.waveReached = n;
+        this.pendingKinds = ArenaWave.Roster(n, this.rng);
+        this.spawnTimerMs = 0;
+        if (this.sfx != null) { this.sfx.Wave(); }
+    }
+
+    // 命中率（0..1）。
+    public double Accuracy() {
+        if (this.shots <= 0) { return 0.0; }
+        return (double)this.hits / (double)this.shots;
+    }
+
+    // 本局得分：击杀 + 波数。
+    public int Score() {
+        return this.kills * 100 + this.waveReached * 500;
+    }
+
+    // 本局用时（秒）。
+    public double ElapsedSeconds() {
+        return this.elapsedMs / 1000.0;
+    }
+
+    // 推进一帧（dtMs 是帧间隔毫秒）。
+    public void Step(double dtMs, ArenaInput input) {
+        if (this.screen != ArenaGame.ScreenPlay) { return; }
+        if (this.gameOver) {
+            this.screen = ArenaGame.ScreenResult;
+            return;
+        }
+        double dt = dtMs / 1000.0;
+        this.elapsedMs = this.elapsedMs + dtMs;
+
+        // --- 玩家 ---
+        this.player.AimAt(input.aimX, input.aimY);
+        this.player.Move(dt, input.moveX, input.moveY, input.sprint);
+        if (input.fire && this.player.Fire()) {
+            this.shots = this.shots + 1;
+            double bx = this.player.x + Math.Cos(this.player.aim) * 22.0;
+            double by = this.player.y + Math.Sin(this.player.aim) * 22.0;
+            this.bullets.Add(new ArenaBullet(bx, by, this.player.aim,
+                ArenaPlayer.BulletSpeed, ArenaPlayer.BulletDamage, true));
+            if (this.sfx != null) { this.sfx.Shoot(); }
+        }
+
+        // --- 敌人 ---
+        int ei = 0;
+        while (ei < this.enemies.Count) {
+            ArenaEnemy e = this.enemies[ei];
+            e.Update(dt, this.player);
+
+            // 接触伤害（每个敌人有 0.6 秒冷却）。
+            double dx = this.player.x - e.x;
+            double dy = this.player.y - e.y;
+            double rr = ArenaPlayer.Radius + e.radius;
+            if (this.player.alive && e.contactTimer <= 0.0
+                && dx * dx + dy * dy <= rr * rr) {
+                e.contactTimer = 0.6;
+                this.player.TakeDamage(e.contactDamage);
+                this.streak = 0;
+                if (this.sfx != null) { this.sfx.Hurt(); }
+                // 击退：把敌人推开一点，避免贴脸连续判定。
+                double len = Math.Sqrt(dx * dx + dy * dy);
+                if (len > 0.001) {
+                    e.x = e.x - dx / len * 6.0;
+                    e.y = e.y - dy / len * 6.0;
+                }
+            }
+
+            // 炮塔定点开火。
+            if (e.WantsFire(this.player)) {
+                e.fireTimer = ArenaEnemy.TurretFireInterval;
+                this.bullets.Add(new ArenaBullet(e.x, e.y, e.aim, 250.0, 12, false));
+                if (this.sfx != null) { this.sfx.Turret(); }
+            }
+            ei = ei + 1;
+        }
+
+        // --- 子弹 ---
+        int bi = 0;
+        while (bi < this.bullets.Count) {
+            ArenaBullet b = this.bullets[bi];
+            b.Update(dt);
+            bool consumed = false;
+            if (b.dead) {
+                consumed = true;
+            } else if (b.fromPlayer) {
+                int hitIndex = -1;
+                for (int k = 0; k < this.enemies.Count; k = k + 1) {
+                    ArenaEnemy e = this.enemies[k];
+                    if (b.HitsCircle(e.x, e.y, e.radius)) {
+                        hitIndex = k;
+                        break;
+                    }
+                }
+                if (hitIndex >= 0) {
+                    ArenaEnemy e = this.enemies[hitIndex];
+                    this.hits = this.hits + 1;
+                    if (this.sfx != null) { this.sfx.Hit(); }
+                    if (e.Hurt(b.damage)) {
+                        this.KillEnemy(hitIndex);
+                    }
+                    consumed = true;
+                }
+            } else if (this.player.alive
+                && b.HitsCircle(this.player.x, this.player.y, ArenaPlayer.Radius)) {
+                this.player.TakeDamage(b.damage);
+                this.streak = 0;
+                if (this.sfx != null) { this.sfx.Hurt(); }
+                consumed = true;
+            }
+            if (consumed) {
+                this.bullets.RemoveAt(bi);
+            } else {
+                bi = bi + 1;
+            }
+        }
+
+        // --- 掉落物 ---
+        int pi = 0;
+        while (pi < this.pickups.Count) {
+            ArenaPickup p = this.pickups[pi];
+            p.Update(dt);
+            bool taken = false;
+            if (this.player.alive && p.PickedUp(this.player)) {
+                if (p.kind == ArenaPickup.Health) {
+                    this.player.Heal(p.amount);
+                } else {
+                    this.player.ammo = this.player.ammo + p.amount;
+                    if (this.player.ammo > ArenaPlayer.MaxAmmo) {
+                        this.player.ammo = ArenaPlayer.MaxAmmo;
+                    }
+                }
+                if (this.sfx != null) { this.sfx.Pickup(); }
+                taken = true;
+            }
+            if (taken || p.dead) {
+                this.pickups.RemoveAt(pi);
+            } else {
+                pi = pi + 1;
+            }
+        }
+
+        // --- 爆炸特效 ---
+        int xi = 0;
+        while (xi < this.effects.Count) {
+            ArenaEffect fx = this.effects[xi];
+            fx.Update(dt);
+            if (fx.Finished()) {
+                this.effects.RemoveAt(xi);
+            } else {
+                xi = xi + 1;
+            }
+        }
+
+        // --- 波次推进 ---
+        int dtInt = (int)dtMs;
+        if (this.pendingKinds.Count > 0) {
+            this.spawnTimerMs = this.spawnTimerMs + dtInt;
+            if (this.spawnTimerMs >= ArenaWave.SpawnIntervalMs) {
+                this.spawnTimerMs = 0;
+                int kind = this.pendingKinds[0];
+                this.pendingKinds.RemoveAt(0);
+                this.SpawnEnemy(kind);
+                this.wave.spawned = this.wave.spawned + 1;
+            }
+        }
+        if (this.wave.supplyLeftMs > 0) {
+            this.wave.supplyLeftMs = this.wave.supplyLeftMs - dtInt;
+            if (this.wave.supplyLeftMs <= 0) {
+                this.wave.supplyLeftMs = 0;
+                // 补给期结束：弹药补满 + 恢复 25 HP + 耐力回满。
+                this.player.Resupply();
+                this.player.Heal(25);
+                this.StartWave(this.wave.wave + 1);
+            }
+        } else if (this.pendingKinds.Count == 0 && this.enemies.Count == 0
+            && this.wave.waveRunning) {
+            // 本波清空 → 进入 3 秒补给期。
+            this.wave.waveRunning = false;
+            this.wave.supplyLeftMs = ArenaWave.SupplyMs;
+        }
+
+        // --- 失败判定 ---
+        if (!this.player.alive) {
+            this.gameOver = true;
+            this.screen = ArenaGame.ScreenResult;
+            if (this.sfx != null) { this.sfx.GameOver(); }
+        }
+    }
+
+    // 在场地边缘放一个敌人（错开出场，避免叠在一起）。
+    void SpawnEnemy(int kind) {
+        double x = 480.0;
+        double y = 60.0;
+        int edge = this.rng.Range(0, 4);
+        if (edge == 0) {
+            x = (double)this.rng.Range(70, 890);
+            y = 62.0;
+        } else if (edge == 1) {
+            x = 898.0;
+            y = (double)this.rng.Range(70, 530);
+        } else if (edge == 2) {
+            x = (double)this.rng.Range(70, 890);
+            y = 538.0;
+        } else {
+            x = 62.0;
+            y = (double)this.rng.Range(70, 530);
+        }
+        ArenaEnemy e = new ArenaEnemy(kind, x, y, this.difficulty);
+        double rx;
+        double ry;
+        ArenaWorld.Resolve(x, y, e.radius, out rx, out ry);
+        e.x = rx;
+        e.y = ry;
+        this.enemies.Add(e);
+    }
+
+    // 敌人死亡：记分、爆特效、掉弹药/血包。
+    void KillEnemy(int index) {
+        if (index < 0 || index >= this.enemies.Count) { return; }
+        ArenaEnemy e = this.enemies[index];
+        this.kills = this.kills + 1;
+        this.streak = this.streak + 1;
+        if (this.streak > this.maxStreak) { this.maxStreak = this.streak; }
+        this.effects.Add(new ArenaEffect(e.x, e.y, e.radius * 2.6));
+        // 每次击杀都掉弹药，35% 概率额外掉血包。
+        this.pickups.Add(new ArenaPickup(e.x, e.y, ArenaPickup.Ammo,
+            12 + this.rng.Range(0, 9)));
+        if (this.rng.Range(0, 100) < 35) {
+            this.pickups.Add(new ArenaPickup(e.x + 14.0, e.y, ArenaPickup.Health, 20));
+        }
+        this.enemies.RemoveAt(index);
+        if (this.sfx != null) { this.sfx.Explode(); }
+    }
+
+    // 自动驾驶输入：瞄最近的敌人、按距离走位、保持距离并持续开火。
+    // 人玩与用例共用同一套战斗规则（演示模式 / 无头冒烟 / 玩法用例）。
+    public ArenaInput AutoInput() {
+        ArenaInput input = new ArenaInput();
+        int best = -1;
+        double bestDist = 0.0;
+        for (int i = 0; i < this.enemies.Count; i = i + 1) {
+            ArenaEnemy e = this.enemies[i];
+            double dx = e.x - this.player.x;
+            double dy = e.y - this.player.y;
+            double d = Math.Sqrt(dx * dx + dy * dy);
+            if (best < 0 || d < bestDist) {
+                best = i;
+                bestDist = d;
+            }
+        }
+        if (best < 0) {
+            input.aimX = ArenaWorld.SpawnX();
+            input.aimY = ArenaWorld.SpawnY();
+            input.moveX = ArenaWorld.SpawnX() - this.player.x;
+            input.moveY = ArenaWorld.SpawnY() - this.player.y;
+            return input;
+        }
+        ArenaEnemy target = this.enemies[best];
+        input.aimX = target.x;
+        input.aimY = target.y;
+        double ax = this.player.x - target.x;
+        double ay = this.player.y - target.y;
+        double len = Math.Sqrt(ax * ax + ay * ay);
+        if (len < 0.001) {
+            ax = 1.0;
+            ay = 0.0;
+            len = 1.0;
+        }
+        if (bestDist < 190.0) {
+            // 太近：后撤。
+            input.moveX = ax / len;
+            input.moveY = ay / len;
+            input.sprint = true;
+        } else if (bestDist > 330.0) {
+            // 太远：压上。
+            input.moveX = -ax / len;
+            input.moveY = -ay / len;
+        } else {
+            // 中距：横向绕圈。
+            input.moveX = -ay / len;
+            input.moveY = ax / len;
+        }
+        input.fire = this.player.ammo > 0 && this.player.fireTimer <= 0.0;
+        return input;
+    }
+}

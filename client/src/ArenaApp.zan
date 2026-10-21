@@ -1,0 +1,246 @@
+using System;
+using System.Collections.Generic;
+using Gui;
+using Gui.Backend;
+using Game.Kit;
+using Game.Foundation.Gui;
+
+// 应用层：GuiHost 回调 + 输入采集 + 三个画面（菜单 / 游戏中 / 结算）。
+//
+// 输入口径（权威契约）：kind 1=鼠标移动 2=鼠标按下 3=鼠标释放 4=键按下
+// 5=键抬起；keycode 是 Windows VK（空格 32、Esc 27、方向键 37~40、
+// 字母是大写 ASCII：W=87 A=65 S=83 D=68）。连续移动靠按键状态表，
+// 每帧在 Update 里读，不靠"事件到达时移动一步"。
+public class ArenaApp : IGuiHostLoop {
+    public const int KeyW = 87;
+    public const int KeyA = 65;
+    public const int KeyS = 83;
+    public const int KeyD = 68;
+    public const int KeyUp = 38;
+    public const int KeyDown = 40;
+    public const int KeyLeft = 37;
+    public const int KeyRight = 39;
+    public const int KeySpace = 32;
+    public const int KeyShift = 16;
+    public const int KeyLeftShift = 160;
+    public const int KeyEscape = 27;
+
+    public GuiHost host;
+    public GameShell shell;
+    public ArenaGame game;
+    public ArenaView view;
+    public List<ArenaButton> buttons;
+
+    bool[] keys;
+    bool mouseDown;
+    int frames;
+    int smokeFrames;
+    bool smokeMode;
+    bool demoMode;
+    bool finished;
+    bool recorded;
+    string capturePath;
+
+    public ArenaApp() {
+        this.keys = new bool[256];
+        this.buttons = new List<ArenaButton>();
+        this.shell = new GameShell();
+        this.game = new ArenaGame();
+        this.game.sfx = new ArenaSfx();
+        this.view = new ArenaView();
+        this.view.LoadAssets();
+        this.smokeMode = Environment.GetEnvironmentVariable("ARENA_SMOKE") == "1";
+        this.demoMode = Environment.GetEnvironmentVariable("ARENA_DEMO") == "1";
+        this.capturePath = Environment.GetEnvironmentVariable("ARENA_CAPTURE");
+        string framesEnv = Environment.GetEnvironmentVariable("ARENA_FRAMES");
+        if (framesEnv != "") { this.smokeFrames = Convert.ToInt32(framesEnv); }
+        if (this.smokeFrames <= 0) { this.smokeFrames = 90; }
+    }
+
+    // ----- IGuiHostLoop --------------------------------------------------
+
+    public void Start(GuiHost h) {
+        this.host = h;
+        // 设置浮层挂到 HUD 层（标准库控件，盖在战场之上）。
+        h.Hud().Add(this.shell.Overlay().Root());
+        this.game.difficulty = this.shell.Difficulty();
+        this.game.autoPlay = this.shell.AutoPlay();
+        if (this.smokeMode || this.demoMode) {
+            // 冒烟/演示：直接进对局并交给自动驾驶（保证跑到真玩法上）。
+            this.game.autoPlay = true;
+            this.game.NewGame((long)Window.GetTickMs() + 20261021L);
+        }
+    }
+
+    public void Event(GuiHost h, int kind, int keycode) {
+        if (kind == 4) {
+            if (keycode >= 0 && keycode < 256) { this.keys[keycode] = true; }
+            if (keycode == ArenaApp.KeyEscape) { this.shell.Overlay().Toggle(); }
+            return;
+        }
+        if (kind == 5) {
+            if (keycode >= 0 && keycode < 256) { this.keys[keycode] = false; }
+            return;
+        }
+        if (kind == 2) {
+            this.mouseDown = keycode == 0;
+            if (this.mouseDown) { this.OnClick(h.MouseX(), h.MouseY()); }
+            return;
+        }
+        if (kind == 3) {
+            this.mouseDown = false;
+            return;
+        }
+    }
+
+    public void FixedUpdate(GuiHost h, int deltaMilliseconds) { }
+
+    public void Update(GuiHost h, int deltaMilliseconds) {
+        this.shell.Overlay().Tick();
+        // 帧计数放在 Update：窗口不可见时宿主跳过渲染。
+        this.frames = this.frames + 1;
+        if (this.smokeMode && this.frames >= this.smokeFrames) {
+            this.Finish();
+            h.RequestStop();
+            return;
+        }
+        if (this.game.screen == ArenaGame.ScreenResult) {
+            this.RecordRun();
+            return;
+        }
+        if (this.game.screen != ArenaGame.ScreenPlay) { return; }
+        ArenaInput input = this.BuildInput(h);
+        // 自动驾驶（演示 / 冒烟 / 设置里开了自动驾驶）：输入交给 AI。
+        if (this.game.autoPlay) { input = this.game.AutoInput(); }
+        this.game.Step((double)deltaMilliseconds, input);
+    }
+
+    public void Render(GuiHost h, Canvas c, double alpha) {
+        CDraw.Origin(0, h.ContentTop());
+        int stageW = h.StageWidth();
+        int stageH = h.StageHeight();
+        this.view.Layout(stageW, stageH);
+        this.buttons.Clear();
+
+        if (this.game.screen == ArenaGame.ScreenMenu) {
+            this.view.DrawMenu(c, stageW, stageH, this.shell.BestWave(),
+                this.shell.BestScore(), this.shell.BestStreak(), this.shell.Runs());
+            this.buttons.Add(new ArenaButton("开始战斗", (stageW - 180) / 2,
+                stageH / 2 - 10, 180, 48, true));
+            this.buttons.Add(new ArenaButton("设置", stageW - 108, 52, 88, 34, false));
+        } else {
+            this.view.DrawWorld(c, this.game, stageW, stageH);
+            this.view.DrawHud(c, this.game);
+            this.view.DrawCrosshair(c, this.view.ToMapX(h.MouseX()),
+                this.view.ToMapY(h.MouseY()));
+            if (this.game.screen == ArenaGame.ScreenResult) {
+                this.view.DrawResult(c, this.game, stageW, stageH,
+                    this.shell.BestWave(), this.shell.BestScore(), this.shell.BestStreak());
+                this.buttons.Add(new ArenaButton("再来一局", (stageW - 380) / 2,
+                    stageH / 2 + 176, 170, 44, true));
+                this.buttons.Add(new ArenaButton("回到主菜单", (stageW + 40) / 2,
+                    stageH / 2 + 176, 170, 44, false));
+                this.buttons.Add(new ArenaButton("设置", stageW - 108, 52, 88, 34, false));
+            }
+        }
+
+        for (int i = 0; i < this.buttons.Count; i = i + 1) {
+            ArenaButton b = this.buttons[i];
+            bool hover = this.host != null
+                && this.host.MouseX() >= b.x && this.host.MouseX() < b.x + b.w
+                && this.host.MouseY() >= b.y && this.host.MouseY() < b.y + b.h;
+            this.view.DrawButton(c, b, hover);
+        }
+
+        if (this.capturePath != "" && this.frames == 60) {
+            c.WritePixels(this.capturePath, 0, 0, c.Width(), c.Height());
+            Console.WriteLine("ARENA_CAPTURE " + Convert.ToString(c.Width())
+                + "x" + Convert.ToString(c.Height()));
+        }
+    }
+
+    public void Stop(GuiHost h) {
+        this.Finish();
+    }
+
+    // ----- 输入 -----------------------------------------------------------
+
+    bool Down(int key) {
+        if (key < 0 || key >= 256) { return false; }
+        return this.keys[key];
+    }
+
+    // 组装一帧输入（人玩）：WASD/方向键移动，鼠标瞄准，左键或空格开火，
+    // Shift 冲刺。
+    ArenaInput BuildInput(GuiHost h) {
+        ArenaInput input = new ArenaInput();
+        double mx = 0.0;
+        double my = 0.0;
+        if (this.Down(ArenaApp.KeyA) || this.Down(ArenaApp.KeyLeft)) { mx = mx - 1.0; }
+        if (this.Down(ArenaApp.KeyD) || this.Down(ArenaApp.KeyRight)) { mx = mx + 1.0; }
+        if (this.Down(ArenaApp.KeyW) || this.Down(ArenaApp.KeyUp)) { my = my - 1.0; }
+        if (this.Down(ArenaApp.KeyS) || this.Down(ArenaApp.KeyDown)) { my = my + 1.0; }
+        input.moveX = mx;
+        input.moveY = my;
+        input.sprint = this.Down(ArenaApp.KeyShift) || this.Down(ArenaApp.KeyLeftShift);
+        input.fire = this.mouseDown || this.Down(ArenaApp.KeySpace);
+        input.aimX = this.view.ToMapX(h.MouseX());
+        input.aimY = this.view.ToMapY(h.MouseY());
+        return input;
+    }
+
+    // ----- 画面切换 -------------------------------------------------------
+
+    void OnClick(int mx, int my) {
+        if (this.shell.Overlay().IsOpen()) { return; }
+        for (int i = 0; i < this.buttons.Count; i = i + 1) {
+            ArenaButton b = this.buttons[i];
+            if (mx < b.x || mx >= b.x + b.w || my < b.y || my >= b.y + b.h) { continue; }
+            if (b.label == "开始战斗") {
+                this.game.difficulty = this.shell.Difficulty();
+                this.game.autoPlay = this.shell.AutoPlay();
+                this.game.NewGame((long)Window.GetTickMs() + 20261021L);
+                this.recorded = false;
+                return;
+            }
+            if (b.label == "设置") { this.shell.Overlay().Toggle(); return; }
+            if (b.label == "再来一局") {
+                this.game.difficulty = this.shell.Difficulty();
+                this.game.autoPlay = this.shell.AutoPlay();
+                this.game.NewGame((long)Window.GetTickMs() + 20261021L);
+                this.recorded = false;
+                return;
+            }
+            if (b.label == "回到主菜单") {
+                this.RecordRun();
+                this.game.screen = ArenaGame.ScreenMenu;
+                return;
+            }
+        }
+    }
+
+    // 一局结束：把成绩记进存档外壳（内存，退出时落盘）。
+    void RecordRun() {
+        if (this.recorded) { return; }
+        this.recorded = true;
+        this.shell.RecordRun(this.game.waveReached, this.game.Score(),
+            this.game.maxStreak);
+    }
+
+    // 收尾：存档落盘 + 打印读回值（测试脚本靠这行验证"跑两遍读得到"）。
+    void Finish() {
+        if (this.finished) { return; }
+        this.finished = true;
+        this.RecordRun();
+        this.shell.Save();
+        Console.WriteLine("ARENA_SAVE bestWave=" + Convert.ToString(this.shell.BestWave())
+            + " bestScore=" + Convert.ToString(this.shell.BestScore())
+            + " bestStreak=" + Convert.ToString(this.shell.BestStreak())
+            + " runs=" + Convert.ToString(this.shell.Runs()));
+        if (this.smokeMode) {
+            Console.WriteLine("ARENA_SMOKE_OK frames=" + Convert.ToString(this.frames)
+                + " wave=" + Convert.ToString(this.game.waveReached)
+                + " kills=" + Convert.ToString(this.game.kills));
+        }
+    }
+}
