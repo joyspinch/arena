@@ -1,0 +1,45 @@
+using System;
+
+// 朝向：逻辑角 → 精灵表帧号。
+//
+// 引擎运行时转不了图——`Canvas.BlitImage` 只有源矩形 (sx,sy,sw,sh)，没有
+// 旋转、没有水平翻转；`Gui.SpriteBatch` 的每精灵也只有
+// dx/dy/dw/dh/sx/sy/sw/sh/tint。所以方向帧是**离线烘焙**好的精灵表
+// （client/tools/bake_facing.py），运行时只按角度取帧。
+//
+// 约定（三处必须一致，错了就是"转到隔壁去"）：
+//   * 精灵表帧 0 = 主体正面朝上，之后每帧顺时针转 360/frames 度；
+//   * 角度用屏幕坐标（x 向右 = 0°，y 向下 = +90°），与 atan2(dy, dx) 一致；
+//   * 帧号 = 把角度换算成"自上起顺时针"后取最近的帧（四舍五入）。
+//
+// 纯函数，用例直接钉住（client/tests/arena_test.zan）。
+public class ArenaFacing {
+    public const double Pi = 3.14159265358979;
+
+    // 各主体的方向帧数（与 client/ASSETS.md 的精灵表一致）。
+    public const int PlayerFrames = 16;   // 玩家 16 方向（22.5° 一帧）
+    public const int ChaserFrames = 8;    // 冲锋兵 8 方向（45° 一帧）
+    public const int TurretFrames = 8;    // 炮塔 8 方向
+    public const int BruteFrames = 8;     // 重装兵 8 方向
+
+    // 角度（弧度，屏幕坐标）→ 自上起顺时针的度数（0..360，不含 360）。
+    public static double ClockwiseDegrees(double angle) {
+        double deg = angle * 180.0 / ArenaFacing.Pi + 90.0;
+        deg = deg % 360.0;
+        if (deg < 0.0) { deg = deg + 360.0; }
+        return deg;
+    }
+
+    // 角度（弧度，屏幕坐标）→ 精灵表帧号。
+    //
+    // 加半帧再整除 = 四舍五入到最近帧（0° 落在帧 0，90° 落在 90/step 帧）。
+    public static int Frame(double angle, int frames) {
+        if (frames <= 0) { return 0; }
+        double step = 360.0 / (double)frames;
+        double deg = ArenaFacing.ClockwiseDegrees(angle);
+        int idx = (int)((deg + step * 0.5) / step);
+        if (idx >= frames) { idx = frames - 1; }
+        if (idx < 0) { idx = 0; }
+        return idx;
+    }
+}

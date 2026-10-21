@@ -1,0 +1,146 @@
+/* arena — 裂谷竞技的科幻工业风皮肤包。
+ *
+ * 为什么需要它：设置浮层是标准库控件（Panel/Flex/Label/Button），没有
+ * 皮肤包时用的是**系统默认外观**——那张黑卡片 + 灰按钮，和钢板的战场
+ * 拼在一起就是"系统蓝控件 + 工业战场"的拼贴感。
+ *
+ * 用法：把本目录拷到 **exe 同级**的 skins/<名字>/ 下（构建脚本负责），
+ * 启动时 `host.App().UseSkin("arena")` 一次应用（必须在默认皮肤之后，
+ * 否则会被默认皮肤盖回去）。
+ *
+ * 令牌名的坑：`Skin.ThemeOf` 把 `--bg-secondary` 这类 CSS 名映射成
+ * Theme 字段（bgSecondary）。**圆角字段叫 borderRadiusSmall**，所以真正
+ * 生效的圆角令牌是 `--border-radius-*`，不是 `--radius-*`（后者只在本
+ * 皮肤自己的规则里有效）。同理字号是 `--font-size-*`。
+ * 两种都写了：主题层吃 --border-radius-*，本皮肤的规则吃 --radius-*。
+ *
+ * 外观目标：深钢蓝底 + 橙色警示 + 直角硬边（工业仪表盘，不是棉花糖）。
+ * 色值与 client/src/ArenaPalette.zan 一一对应——画布上的 UI 与标准库
+ * 控件是两套渲染路径，靠同一份色值保持观感统一。
+ *
+ * 引擎限制：CSS 背景只吃颜色与线性渐变，**url() 贴图不支持**（没有
+ * border-image），所以这里的卡与按钮是纯色/描边风格；画布上的美术底板
+ * 走 client/assets/ui_*.png（九宫格自切），不在本包里。
+ */
+
+:root {
+  --name: "裂谷工业";
+  --order: 10;
+  --base: dark;
+  --dark: 1;
+
+  /* —— 强调色：工业警示橙 —— */
+  --primary: #E8862B;
+  --primary-hover: #F5A055;
+  --primary-pressed: #B96A18;
+
+  /* —— 文字 —— */
+  --text-primary: #D8E2EC;
+  --text-secondary: #9DB0C2;
+  --text-tertiary: #6E8296;
+  --text-inverse: #1A1206;
+
+  /* —— 表面：深钢蓝 —— */
+  --bg-primary: #131A22;
+  --bg-secondary: #1B242E;
+  --bg-tertiary: #232E3A;
+  --bg-hover: #2A3745;
+  --bg-active: #33414F;
+
+  /* —— 描边 —— */
+  --border-primary: #3A4A5A;
+  --border-secondary: #2A3644;
+  --border-hover: #E8862B;
+  --border-focus: #F5A055;
+  --divider: #2A3644;
+  --shadow-color: #000000A0;
+
+  /* —— 语义色 —— */
+  --success: #8FD8A6;
+  --warning: #FFB347;
+  --error: #E05A4E;
+  --info: #4FA3E3;
+
+  /* —— 圆角：工业风要直角（小圆角）—— */
+  --border-radius-small: 2;
+  --border-radius-medium: 3;
+  --border-radius-large: 4;
+  --radius-small: 2;
+  --radius-medium: 3;
+  --radius-large: 4;
+
+  /* —— 字号 —— */
+  --font-size-tiny: 12;
+  --font-size-small: 13;
+  --font-size-medium: 14;
+  --font-size-large: 16;
+  --font-size-huge: 20;
+}
+
+/* ---- 按钮：切角钢板（深底 + 橙描边），悬停点亮、按下降亮反色 ---- */
+button {
+  background: #1E2833;
+  color: #D8E2EC;
+  border: 1 #3E5063;
+  border-radius: var(--radius-small);
+  letter-spacing: 1;
+}
+button:hover {
+  background: #27343F;
+  border-color: #E8862B;
+  color: #F0F6FC;
+}
+button:active {
+  background: #141B23;
+  border-color: #A85F1A;
+  color: #C8D4E0;
+}
+button:focus { border-color: #F5A055; }
+
+/* 主按钮（当前选中的档位、强调动作）：警示橙底 + 深字。 */
+button.primary {
+  background: #C8741E;
+  color: #1A1206;
+  border: 1 #F0A050;
+}
+button.primary:hover {
+  background: #E0862A;
+  border-color: #FFC080;
+  color: #140E04;
+}
+button.primary:active {
+  background: #8E5414;
+  border-color: #C06A20;
+  color: #1A1206;
+}
+
+/* 禁用：熄火成铁灰，和钢板融在一起。 */
+button:disabled {
+  background: #151B22;
+  color: #5A6773;
+  border: 1 #2A3644;
+}
+
+/* ---- 标签：正文亮、说明退灰；字距拉开一点，读起来像仪表盘刻度 ---- */
+label {
+  color: #D8E2EC;
+  letter-spacing: 1;
+}
+
+/* ---- 设置浮层那张卡（SettingsOverlay 的内容盒 class = card）----
+ * 直角 + 橙色描边 + 深钢蓝底，别再是系统默认黑卡片。
+ * `panel.card` 与 `card` 两条都要命中：内容盒是带名字的 Panel
+ * （类型选择器 panel）+ class card。 */
+panel.card, card {
+  background: #17202A;
+  color: #D8E2EC;
+  border: 1 #E8862B;
+  border-radius: var(--radius-medium);
+  box-shadow: 0 6 18 #000000A0;
+  padding: 18px;
+}
+panel.card::title, card::title {
+  color: #F2C14E;
+  font-size: var(--font-size-large);
+}
+panel.card::divider, card::divider { background: #2A3644; }

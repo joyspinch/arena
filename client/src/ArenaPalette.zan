@@ -1,0 +1,68 @@
+// 裂谷竞技的色板：全项目只此一份颜色定义。
+//
+// 判据：同一个语义只允许在这里挑一次颜色——底色/前景/强调/危险/成功/
+// 面板底/描边各一个值，渲染层与 HUD 层都从这里取，不允许三个文件各挑
+// 一个"差不多的蓝"。
+//
+// 皮肤包（client/assets/skins/arena/skin.css）里的同名色值必须与这里
+// 一致：画布上的 UI 与标准库控件（设置浮层）是两套渲染路径，靠同一份
+// 色值保持观感统一。
+public class ArenaPalette {
+    // 底色（画面最底层）
+    public const int BgDeep = 0xFF0A0D12;      // 菜单遮罩底
+    public const int BgStage = 0xFF1E2530;     // 地面位图缺失时的兜底
+
+    // 面板底
+    public const int PanelBg = 0xFF1A2028;     // 结算面板
+    public const int PanelBgSoft = 0xFF232C36; // HUD 面板
+    public const int BarBg = 0xB0141820;       // 血条/耐力条底槽
+
+    // 前景文字
+    public const int FgPrimary = 0xFFD8E2EC;   // 正文
+    public const int FgSecondary = 0xFF9DB0C2; // 次要说明
+    public const int FgTertiary = 0xFF6E8296;  // 弱化提示
+    public const int FgInverse = 0xFF1A1206;   // 橙底上的深色字
+
+    // 强调（工业警示橙）
+    public const int Accent = 0xFFE8862B;
+    public const int AccentBright = 0xFFF5A055;
+    public const int AccentDim = 0xFF8E5414;
+    public const int AccentText = 0xFFF2C14E;  // 标题金
+
+    // 描边
+    public const int Edge = 0xFF3E5063;        // 常规描边
+    public const int EdgeBright = 0xFF6E88A4;  // 高亮描边
+    public const int WallEdge = 0xFF788CA5;    // 场地内沿亮边
+    public const int WallBody = 0xB0101419;    // 墙体暗带
+
+    // 语义色
+    public const int Hp = 0xFF48C78E;
+    public const int Stamina = 0xFF4FA3E3;
+    public const int Ammo = 0xFFFFD98A;
+    public const int Danger = 0xFFE05A4E;
+    public const int Success = 0xFF8FD8A6;
+    public const int Streak = 0xFFFFB347;
+    public const int Crosshair = 0xFFFFE68C;
+
+    // 主体细节
+    public const int Shadow = 0x70000000;      // 落地投影（椭圆暗影）
+    public const int Flash = 0xFFFFF0C0;       // 受击闪白
+    public const int EnemyHp = 0xFFE05A4E;
+    public const int CoverShadow = 0x50000000; // 掩体接触阴影
+    public const int CoverShade = 0x33000000;  // 掩体压暗
+
+    // 半透明遮罩
+    public const int MenuMask = 0xD00A0D12;    // 主菜单压暗
+    public const int ResultMask = 0xB0000000;  // 结算压暗
+    public const int PanelFallback = 0xD01A2028;
+
+    // UI 底板兜底色（底板贴图缺失时用）
+    public const int PlateBody = 0xFF1E2833;
+    public const int PlatePrimary = 0xFFC8741E;
+
+    // 主体底色（贴图缺失时的纯色兜底）
+    public const int PlayerFallback = 0xFF3E8FD6;
+    public const int ChaserFallback = 0xFFCE4A4A;
+    public const int TurretFallback = 0xFF6FA85C;
+    public const int BruteFallback = 0xFF9B6BD6;
+}

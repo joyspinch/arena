@@ -55,6 +55,8 @@ cd build/arena; .\Arena.exe
 | `ARENA_FRAMES=<n>` | 冒烟帧数（默认 90） |
 | `ARENA_DEMO=1` | 演示模式：直接进对局并自动驾驶（截图 / 录屏用） |
 | `ARENA_CAPTURE=<path.zpx>` | 渲染第 60 帧时把后端画布存成 ZPX（调试用，验收走窗口像素） |
+| `ARENA_SHOWCASE=face_right\|face_left` | 截图取证：进对局、玩家站桩，朝向锁死（左右各一张，证明朝向真的换了） |
+| `ARENA_SHOWCASE=settings` | 截图取证：进对局并把设置浮层顶开（证明皮肤包生效） |
 
 ## 怎么测
 
@@ -65,20 +67,34 @@ pwsh -File client/tools/test.ps1 -Compiler D:\project\zan-lang\build\zanc.exe `
 
 三段全绿才算过：
 
-1. `arena_test_OK` —— 玩法断言用例（`client/tests/arena_test.zan`，179 条
+1. `arena_test_OK` —— 玩法断言用例（`client/tests/arena_test.zan`，203 条
    断言）：波次数量递增与上限、三种敌人解锁波次、子弹命中扣血与死亡移除、
    玩家 HP 归零进结算、命中率统计、补给期恢复弹药/血量/耐力、圆与矩形碰撞
-   判定、玩家穿不过墙与掩体、3 个随机种子的完整对局跑完且状态自洽。
+   判定、玩家穿不过墙与掩体、3 个随机种子的完整对局跑完且状态自洽，
+   以及**朝向映射**（角度 → 精灵表帧号：±π/±2π 等价、帧界、单调递进、
+   玩家 aim 变化 → 帧号变化、炮塔/重装兵取帧跟随目标）。
 2. `arena_SAVE_OK runs=1 -> runs=2` —— 存档写两遍读得到（第二遍是新进程）。
 3. `arena_SMOKE_OK` —— 无头冒烟跑满帧退出。
 
 截图验收（抓窗口像素，不是后端画布）：
 
 ```powershell
-$env:ARENA_DEMO='1'
+$env:ARENA_SHOWCASE='face_right'
 python D:\project\zan-lang\scripts\shot_window.py build\arena\Arena.exe `
-    build\arena\shot.png 6 build\arena
+    build\arena\ui_face_right.png 1.4 build\arena
 ```
+
+## 观感（第二轮：朝向 + UI 图形化）
+
+- **朝向**：引擎运行时转不了图，方向帧离线烘焙成精灵表
+  （`client/tools/bake_facing.py`），运行时按角度取帧——玩家 16 方向（按瞄准
+  角），冲锋兵/炮塔 8 方向（面朝玩家），重装兵 8 方向（面朝移动方向）。
+  映射规则、帧数、帧边长见 `client/ASSETS.md`，由用例钉住。
+- **UI**：游戏自带皮肤包 `client/assets/skins/arena/skin.css`（深钢蓝 + 橙色
+  警示 + 直角），启动时 `UseSkin("arena")`；画布上的按钮与面板用美术底板
+  （`client/assets/ui_*.png`，九宫格自切）而不是圆角纯色块；颜色统一收在
+  `client/src/ArenaPalette.zan`。
+- **主体细节**：落地投影、掩体接触阴影、受击抖动 + 辉光、死亡冲击波环。
 
 ## 代码结构
 
@@ -86,7 +102,7 @@ python D:\project\zan-lang\scripts\shot_window.py build\arena\Arena.exe `
 client/src/
   ArenaGame.zan     玩法核心：状态机（菜单/游戏中/结算）、波次推进、战斗结算、统计
   ArenaPlayer.zan   玩家：加速度与摩擦、瞄准、弹药、耐力冲刺
-  ArenaEnemy.zan    三种敌人：属性、行为、受击
+  ArenaEnemy.zan    三种敌人：属性、行为、受击、朝向（aim 面朝玩家 / facing 面朝移动方向）
   ArenaBullet.zan   弹体（玩家与炮塔共用）
   ArenaPickup.zan   掉落物（弹药箱 / 医疗包）
   ArenaEffect.zan   爆炸特效
@@ -94,10 +110,17 @@ client/src/
   ArenaWorld.zan    地图与碰撞（960×600、墙体、5 处掩体）
   ArenaInput.zan    一帧输入结构（人玩与自动驾驶共用）
   ArenaSfx.zan      音效事件表（底层用公共包 SfxBank）
-  ArenaView.zan     渲染层：贴图加载、战场、HUD、菜单、结算面板
-  ArenaApp.zan      GuiHost 回调、输入采集、三个画面
+  ArenaFacing.zan   朝向：逻辑角 → 精灵表帧号的纯函数（映射规则见 ASSETS.md）
+  ArenaPalette.zan  色板：全项目唯一一份颜色定义
+  ArenaView.zan     渲染层：贴图加载、方向帧取帧、九宫格底板、战场、HUD、菜单、结算面板
+  ArenaApp.zan      GuiHost 回调、输入采集、三个画面、皮肤应用
   GameShell.zan     存档（最高波数/最高分/最高连杀/局数）+ 设置
   main.zan          GuiHost 入口
+client/tools/
+  build.ps1         编译 + 拷 assets/ 与皮肤包
+  test.ps1          三段测试（玩法断言 / 存档两遍 / 无头冒烟）
+  bake_facing.py    离线烘焙方向精灵表（原图 → 16/8 帧横条）
+  bake_ui.py        生成 UI 底板（按钮三态 / 面板）与椭圆投影
 ```
 
 分层口径：**玩法逻辑不碰画布**（`ArenaGame` 及其依赖），渲染只在

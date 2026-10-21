@@ -40,6 +40,10 @@ public class ArenaApp : IGuiHostLoop {
     bool finished;
     bool recorded;
     string capturePath;
+    // 展示模式（截图用）：固定玩家朝向，让"朝右 / 朝左"一眼能看出差别。
+    string showcase;
+    bool showcaseAim;
+    double showcaseAngle;
 
     public ArenaApp() {
         this.keys = new bool[256];
@@ -52,6 +56,17 @@ public class ArenaApp : IGuiHostLoop {
         this.smokeMode = Environment.GetEnvironmentVariable("ARENA_SMOKE") == "1";
         this.demoMode = Environment.GetEnvironmentVariable("ARENA_DEMO") == "1";
         this.capturePath = Environment.GetEnvironmentVariable("ARENA_CAPTURE");
+        // 展示模式：face_right / face_left / settings（截图取证用）。
+        this.showcase = Environment.GetEnvironmentVariable("ARENA_SHOWCASE");
+        this.showcaseAim = false;
+        this.showcaseAngle = 0.0;
+        if (this.showcase == "face_right") {
+            this.showcaseAim = true;
+            this.showcaseAngle = 0.0;          // 屏幕坐标：+x = 右
+        } else if (this.showcase == "face_left") {
+            this.showcaseAim = true;
+            this.showcaseAngle = 3.14159265358979;
+        }
         string framesEnv = Environment.GetEnvironmentVariable("ARENA_FRAMES");
         if (framesEnv != "") { this.smokeFrames = Convert.ToInt32(framesEnv); }
         if (this.smokeFrames <= 0) { this.smokeFrames = 90; }
@@ -61,6 +76,9 @@ public class ArenaApp : IGuiHostLoop {
 
     public void Start(GuiHost h) {
         this.host = h;
+        // 皮肤包（科幻工业风）：必须在默认皮肤之后应用，否则被盖回去。
+        // 皮肤目录与 exe 同级：build/arena/skins/arena/skin.css。
+        if (h.App() != null) { h.App().UseSkin("arena"); }
         // 设置浮层挂到 HUD 层（标准库控件，盖在战场之上）。
         h.Hud().Add(this.shell.Overlay().Root());
         this.game.difficulty = this.shell.Difficulty();
@@ -68,6 +86,19 @@ public class ArenaApp : IGuiHostLoop {
         if (this.smokeMode || this.demoMode) {
             // 冒烟/演示：直接进对局并交给自动驾驶（保证跑到真玩法上）。
             this.game.autoPlay = true;
+            this.game.NewGame((long)Window.GetTickMs() + 20261021L);
+        }
+        if (this.showcase == "settings") {
+            // 截图取证用：进对局并把设置浮层顶开（证明换肤生效；背景是
+            // 真实战场，比压在菜单上更说明"这是游戏里的浮层"）。
+            this.game.autoPlay = true;
+            this.game.NewGame((long)Window.GetTickMs() + 20261021L);
+            this.shell.Overlay().SetOpen(true);
+        }
+        if (this.showcaseAim) {
+            // 截图取证用：进对局但玩家站桩不跑（画面干净，方向一眼可见），
+            // 朝向锁死。
+            this.game.autoPlay = false;
             this.game.NewGame((long)Window.GetTickMs() + 20261021L);
         }
     }
@@ -112,7 +143,16 @@ public class ArenaApp : IGuiHostLoop {
         ArenaInput input = this.BuildInput(h);
         // 自动驾驶（演示 / 冒烟 / 设置里开了自动驾驶）：输入交给 AI。
         if (this.game.autoPlay) { input = this.game.AutoInput(); }
+        if (this.showcaseAim) {
+            // 展示模式：玩家站桩（不移动、不射击），朝向锁死。
+            input.moveX = 0.0;
+            input.moveY = 0.0;
+            input.fire = false;
+        }
         this.game.Step((double)deltaMilliseconds, input);
+        if (this.showcaseAim) {
+            this.game.player.aim = this.showcaseAngle;
+        }
     }
 
     public void Render(GuiHost h, Canvas c, double alpha) {
@@ -149,7 +189,19 @@ public class ArenaApp : IGuiHostLoop {
             bool hover = this.host != null
                 && this.host.MouseX() >= b.x && this.host.MouseX() < b.x + b.w
                 && this.host.MouseY() >= b.y && this.host.MouseY() < b.y + b.h;
-            this.view.DrawButton(c, b, hover);
+            bool pressed = hover && this.mouseDown;
+            this.view.DrawButton(c, b, hover, pressed);
+        }
+
+        // 设置浮层是 HUD 控件：宿主每帧只"画"HUD、不给 HUD 控件排版，
+        // 浮层根得先测量再按舞台尺寸排一次，内容盒（card）才有尺寸、
+        // 才画得出来（否则浮层整层是空的、Esc 打开等于没打开）。
+        // 放在本帧画面画完之后：测量会动到画布的样式状态，不能插在
+        // 画面绘制中间（会把菜单/战场那几笔吃掉）。
+        if (this.shell.Overlay().IsOpen() && h.App() != null) {
+            Control overlayRoot = this.shell.Overlay().Root();
+            overlayRoot.MeasureTree(h.App());
+            overlayRoot.Arrange(0, 0, stageW, stageH);
         }
 
         if (this.capturePath != "" && this.frames == 60) {

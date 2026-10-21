@@ -57,4 +57,12 @@ $zargs += @('-o', $exe)
 if ($LASTEXITCODE -ne 0) { throw "zanc failed ($LASTEXITCODE)" }
 $assets = Join-Path $project 'assets'
 if (Test-Path $assets) { Copy-Item $assets $Output -Recurse -Force }
+# 皮肤包必须与 exe 同级（Gui.Styling.Skin.Roots 查 exe 同级 skins/ 与
+# assets/skins/；前者优先）。assets/ 那份是发布内嵌用的备份。
+$skinSrc = Join-Path $assets 'skins/arena'
+if (Test-Path $skinSrc) {
+    $skinDst = Join-Path $Output 'skins/arena'
+    New-Item -ItemType Directory -Force -Path $skinDst | Out-Null
+    Copy-Item (Join-Path $skinSrc '*') $skinDst -Recurse -Force
+}
 Write-Host "Built $exe"

@@ -390,6 +390,99 @@ public class ArenaTest {
         }
     }
 
+    // ----- 朝向映射 -------------------------------------------------------
+
+    // 朝向帧是离线烘焙的精灵表（引擎运行时转不了图），运行时只按角度
+    // 取帧。这里钉死"逻辑朝向 → 帧号"的映射：映射错了，画面上的角色
+    // 就"转到隔壁去了"。
+    static void TestFacing() {
+        // 玩家 16 方向（22.5° 一帧）：帧 0 = 正面朝上，之后顺时针。
+        Eq(ArenaFacing.Frame(0.0, ArenaFacing.PlayerFrames), 4, "玩家朝右 → 帧 4");
+        Eq(ArenaFacing.Frame(-ArenaFacing.Pi / 2.0, ArenaFacing.PlayerFrames), 0,
+            "玩家朝上 → 帧 0");
+        Eq(ArenaFacing.Frame(ArenaFacing.Pi / 2.0, ArenaFacing.PlayerFrames), 8,
+            "玩家朝下 → 帧 8");
+        Eq(ArenaFacing.Frame(ArenaFacing.Pi, ArenaFacing.PlayerFrames), 12,
+            "玩家朝左 → 帧 12");
+        Eq(ArenaFacing.Frame(-ArenaFacing.Pi, ArenaFacing.PlayerFrames), 12,
+            "玩家朝左（负角）→ 帧 12");
+        Eq(ArenaFacing.Frame(ArenaFacing.Pi * 2.0, ArenaFacing.PlayerFrames), 4,
+            "玩家朝右（2π）→ 帧 4");
+        // ±π 与 ±2π 是同一方向，帧号必须一致（角度归一化没漏）。
+        Eq(ArenaFacing.Frame(ArenaFacing.Pi, ArenaFacing.PlayerFrames),
+            ArenaFacing.Frame(-ArenaFacing.Pi, ArenaFacing.PlayerFrames),
+            "±π 同帧");
+        Eq(ArenaFacing.Frame(0.0, ArenaFacing.PlayerFrames),
+            ArenaFacing.Frame(ArenaFacing.Pi * 2.0, ArenaFacing.PlayerFrames),
+            "0 与 2π 同帧");
+
+        // 8 方向（45° 一帧）：冲锋兵 / 炮塔 / 重装兵。
+        Eq(ArenaFacing.Frame(0.0, ArenaFacing.ChaserFrames), 2, "8 方向朝右 → 帧 2");
+        Eq(ArenaFacing.Frame(-ArenaFacing.Pi / 2.0, ArenaFacing.ChaserFrames), 0,
+            "8 方向朝上 → 帧 0");
+        Eq(ArenaFacing.Frame(ArenaFacing.Pi / 2.0, ArenaFacing.ChaserFrames), 4,
+            "8 方向朝下 → 帧 4");
+        Eq(ArenaFacing.Frame(ArenaFacing.Pi, ArenaFacing.ChaserFrames), 6,
+            "8 方向朝左 → 帧 6");
+
+        // 帧界在"自上起顺时针 ±11.25°"处，越过帧界归下一帧。
+        Eq(ArenaFacing.Frame((-90.0 + 11.25) * ArenaFacing.Pi / 180.0,
+            ArenaFacing.PlayerFrames), 1, "帧界 +11.25° 归下一帧");
+        Eq(ArenaFacing.Frame((-90.0 - 11.25) * ArenaFacing.Pi / 180.0,
+            ArenaFacing.PlayerFrames), 15, "帧界 -11.25° 归上一帧");
+
+        // 角度顺时针递增 → 帧号逐帧递进（不回头、不跳帧）。
+        bool monotonic = true;
+        int prev = ArenaFacing.Frame(0.0, ArenaFacing.PlayerFrames);
+        for (int i = 1; i <= 32; i = i + 1) {
+            double a = (double)i * ArenaFacing.Pi / 8.0;   // 每步 22.5°
+            int f = ArenaFacing.Frame(a, ArenaFacing.PlayerFrames);
+            int diff = f - prev;
+            if (diff < 0) { diff = diff + ArenaFacing.PlayerFrames; }
+            if (diff != 1) { monotonic = false; }
+            prev = f;
+        }
+        Ok(monotonic, "角度顺时针递增 → 帧号逐帧递进");
+
+        // 玩家的 aim 变了，取到的帧号必须跟着变（朝向真的接上了渲染）。
+        ArenaPlayer p = new ArenaPlayer();
+        p.aim = 0.0;
+        int rightFrame = ArenaFacing.Frame(p.aim, ArenaFacing.PlayerFrames);
+        p.aim = ArenaFacing.Pi;
+        int leftFrame = ArenaFacing.Frame(p.aim, ArenaFacing.PlayerFrames);
+        Ok(rightFrame != leftFrame, "玩家 aim 变化 → 取帧索引变化");
+        Eq(rightFrame, 4, "玩家朝右取到帧 4");
+        Eq(leftFrame, 12, "玩家朝左取到帧 12");
+
+        // 炮塔面朝玩家：玩家挪到炮塔右边，炮塔的朝向与取帧都要跟着变。
+        ArenaEnemy turret = new ArenaEnemy(ArenaEnemy.Turret, 400.0, 300.0, 2);
+        ArenaPlayer target = new ArenaPlayer();
+        target.x = 600.0;
+        target.y = 300.0;
+        turret.Update(0.016, target);
+        Near(turret.aim, 0.0, 0.001, "炮塔瞄准右侧的玩家");
+        Eq(ArenaFacing.Frame(turret.aim, ArenaFacing.TurretFrames), 2,
+            "炮塔面朝玩家 → 帧 2");
+        target.x = 400.0;
+        target.y = 200.0;
+        turret.Update(0.016, target);
+        Ok(turret.aim < 0.0, "玩家挪到上方后炮塔抬头");
+        Ok(ArenaFacing.Frame(turret.aim, ArenaFacing.TurretFrames) != 2,
+            "玩家挪位置 → 炮塔取帧索引变化");
+
+        // 重装兵面朝移动方向（它一直朝玩家压上，所以移动方向=朝玩家）。
+        ArenaEnemy brute = new ArenaEnemy(ArenaEnemy.Brute, 400.0, 300.0, 2);
+        ArenaPlayer upRight = new ArenaPlayer();
+        upRight.x = 600.0;
+        upRight.y = 200.0;
+        brute.Update(0.016, upRight);
+        double expect = Math.Atan2(upRight.y - brute.y, upRight.x - brute.x);
+        Near(brute.facing, expect, 0.001, "重装兵面朝移动方向");
+        Eq(ArenaFacing.Frame(brute.facing, ArenaFacing.BruteFrames),
+            ArenaFacing.Frame(expect, ArenaFacing.BruteFrames),
+            "重装兵取帧跟随移动方向");
+    }
+
     static void Main() {
         TestWaveCount();
         TestUnlockRules();
@@ -402,6 +495,7 @@ public class ArenaTest {
         TestSupply();
         TestPickup();
         TestFullMatch();
+        TestFacing();
         Console.WriteLine("arena_test checks=" + Convert.ToString(checks)
             + " failures=" + Convert.ToString(failures));
         if (failures > 0) {

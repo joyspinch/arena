@@ -27,6 +27,7 @@ public class ArenaEnemy {
     public double contactTimer;  // 接触伤害冷却
     public double hitFlash;      // 受击闪烁
     public double aim;           // 朝向玩家的角度
+    public double facing;        // 移动方向（重装兵面朝它；其余兵种面朝玩家）
     public bool dead;
 
     public ArenaEnemy(int kind, double x, double y, int difficulty) {
@@ -40,6 +41,7 @@ public class ArenaEnemy {
         this.hitFlash = 0.0;
         this.dead = false;
         this.aim = 0.0;
+        this.facing = 0.0;
         int diff = difficulty;
         if (diff < 1) { diff = 1; }
         if (diff > 3) { diff = 3; }
@@ -113,6 +115,12 @@ public class ArenaEnemy {
         } else {
             this.vx = dx / dist * this.speed;
             this.vy = dy / dist * this.speed;
+        }
+        // 速度定下来后刷新朝向（重装兵面朝移动方向）：贴着掩体滑行时，
+        // 速度方向与"朝玩家"不一样——身体应当跟着移动方向转。
+        double nlen = Math.Sqrt(this.vx * this.vx + this.vy * this.vy);
+        if (nlen > 1.0) {
+            this.facing = Math.Atan2(this.vy, this.vx);
         }
 
         double nx = this.x + this.vx * dt;
