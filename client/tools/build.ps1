@@ -18,10 +18,25 @@ $project = Split-Path -Parent $PSScriptRoot
 $repo = Split-Path -Parent $project
 if (-not $Compiler) {
     $local = if ($env:ZAN_HOME) { Join-Path $env:ZAN_HOME 'build/zanc.exe' } else { '' }
-    if ($local -and (Test-Path $local)) { $Compiler = $local } else { $Compiler = (Get-Command zanc -ErrorAction Stop).Source }
+    if ($local -and (Test-Path $local)) {
+        $Compiler = $local
+    } elseif (Test-Path 'D:/project/zan-lang/build/zanc.exe') {
+        # 没设 ZAN_HOME 时的兜底：默认开发机上的 zan-lang 仓库。
+        $Compiler = 'D:/project/zan-lang/build/zanc.exe'
+    } else {
+        $Compiler = (Get-Command zanc -ErrorAction Stop).Source
+    }
 }
-if (-not $Stdlib -and $env:ZAN_HOME) { $Stdlib = Join-Path $env:ZAN_HOME 'stdlib' }
-if (-not $PackageProject) { if ($env:ZAN_HOME) { $PackageProject = $env:ZAN_HOME } else { throw '需要 $env:ZAN_HOME 指向 zan-lang 仓库（公共包在它的 packages/ 下）' } }
+if (-not $PackageProject) { if ($env:ZAN_HOME) { $PackageProject = $env:ZAN_HOME } else { throw '需要 $env:ZAN_HOME 指向 zan-lang 仓库（公共包在它的 packages/ 下），或用 -PackageProject 指定' } }
+if (-not $Stdlib) {
+    # stdlib 跟着包根走：包根本身就是 zan-lang 的 worktree，里面有 stdlib/。
+    $pkgStdlib = Join-Path $PackageProject 'stdlib'
+    if ($env:ZAN_HOME -and (Test-Path (Join-Path $env:ZAN_HOME 'stdlib'))) {
+        $Stdlib = Join-Path $env:ZAN_HOME 'stdlib'
+    } elseif (Test-Path $pkgStdlib) {
+        $Stdlib = $pkgStdlib
+    }
+}
 if (-not $Output) { $Output = Join-Path $repo 'build/arena' }
 $Output = [IO.Path]::GetFullPath($Output)
 New-Item -ItemType Directory -Force -Path $Output | Out-Null

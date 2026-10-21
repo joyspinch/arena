@@ -14,9 +14,15 @@ $project = Split-Path -Parent $PSScriptRoot
 $repo = Split-Path -Parent $project
 if (-not $Compiler) {
     $local = if ($env:ZAN_HOME) { Join-Path $env:ZAN_HOME 'build/zanc.exe' } else { '' }
-    if ($local -and (Test-Path $local)) { $Compiler = $local } else { $Compiler = (Get-Command zanc -ErrorAction Stop).Source }
+    if ($local -and (Test-Path $local)) {
+        $Compiler = $local
+    } elseif (Test-Path 'D:/project/zan-lang/build/zanc.exe') {
+        $Compiler = 'D:/project/zan-lang/build/zanc.exe'
+    } else {
+        $Compiler = (Get-Command zanc -ErrorAction Stop).Source
+    }
 }
-if (-not $PackageProject) { if ($env:ZAN_HOME) { $PackageProject = $env:ZAN_HOME } else { throw '需要 $env:ZAN_HOME 指向 zan-lang 仓库（公共包在它的 packages/ 下）' } }
+if (-not $PackageProject) { if ($env:ZAN_HOME) { $PackageProject = $env:ZAN_HOME } else { throw '需要 $env:ZAN_HOME 指向 zan-lang 仓库（公共包在它的 packages/ 下），或用 -PackageProject 指定' } }
 $out = Join-Path $repo 'build/arena'
 & (Join-Path $PSScriptRoot 'build.ps1') -Compiler $Compiler -PackageProject $PackageProject -Output $out
 $exe = Join-Path $out 'Arena.exe'
