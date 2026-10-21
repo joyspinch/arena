@@ -1,0 +1,79 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Json;
+using Game.Foundation;
+using Game.Foundation.Gui;
+
+// 裂谷竞技 · ARENA 的外壳：存档（最高分 + 局数）+ 设置（音效/难度/速度）
+// + 设置浮层。
+//
+// 存档基座（原子写 + 备份回退 + 版本号）与设置逻辑层（档位计算 + 校验 +
+// 落盘）都在公共包 Game.Foundation 里；这里只留"这个游戏存什么、设置有哪
+// 几项"——换个游戏换的正是这两行。
+public class GameShell {
+    GameSaveStore store;
+    GameSettings settings;
+    SettingsModel model;
+    SettingsOverlay overlay;
+    int best;
+    int runs;
+
+    public GameShell() {
+        string dir = GameShell.SaveDir();
+        Directory.CreateDirectory(dir);
+        this.store = new GameSaveStore(dir, "arena", 1);
+        this.settings = new GameSettings().At(dir + "/settings.json");
+        this.settings.AddBool("sound", "音效", true);
+        this.settings.AddIntChoice("difficulty", "难度", 2,
+            new List<int> { 1, 2, 3 });
+        this.settings.Load();
+        this.model = new SettingsModel(this.settings);
+        this.overlay = new SettingsOverlay(this.model);
+        this.overlay.SetTitle("设置");
+        this.Load();
+    }
+
+    // 存档目录：%LOCALAPPDATA%/Arena（可用 ARENA_SAVE 环境变量覆盖，
+    // 测试脚本靠它把存档落在临时目录里，不污染玩家机器）。
+    static string SaveDir() {
+        string overridden = Environment.GetEnvironmentVariable("ARENA_SAVE");
+        if (overridden != "") { return overridden; }
+        string basePath = Environment.GetEnvironmentVariable("LOCALAPPDATA");
+        if (basePath == "") { basePath = Directory.GetCurrentDirectory(); }
+        return basePath + "/Arena";
+    }
+
+    public SettingsOverlay Overlay() { return this.overlay; }
+    public int Best() { return this.best; }
+    public int Runs() { return this.runs; }
+
+    // 当前速度档（1/2/3）——游戏逻辑读它调敌人速度。
+    public int SpeedLevel() {
+        if (this.settings == null) { return 2; }
+        return this.settings.GetInt("difficulty");
+    }
+
+    // 读档：没有存档就用默认值，不报错。
+    public void Load() {
+        JsonValue data = this.store.Load(0);
+        if (data == null) { this.best = 0; this.runs = 0; return; }
+        this.best = data.Int("best", 0);
+        this.runs = data.Int("runs", 0);
+    }
+
+    // 存档：最高分只增不减，局数 +1。
+    public void Save() {
+        JsonValue data = JsonValue.NewObject();
+        data.PutInt("best", this.best);
+        data.PutInt("runs", this.runs + 1);
+        this.runs = this.runs + 1;
+        this.store.Save(0, data);
+    }
+
+    // 一局结束：更新最高分并存档。
+    public void EndRun(int score) {
+        if (score > this.best) { this.best = score; }
+        this.Save();
+    }
+}
