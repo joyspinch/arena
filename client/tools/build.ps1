@@ -20,9 +20,6 @@ if (-not $Compiler) {
     $local = if ($env:ZAN_HOME) { Join-Path $env:ZAN_HOME 'build/zanc.exe' } else { '' }
     if ($local -and (Test-Path $local)) {
         $Compiler = $local
-    } elseif (Test-Path 'D:/project/zan-lang/build/zanc.exe') {
-        # 没设 ZAN_HOME 时的兜底：默认开发机上的 zan-lang 仓库。
-        $Compiler = 'D:/project/zan-lang/build/zanc.exe'
     } else {
         $Compiler = (Get-Command zanc -ErrorAction Stop).Source
     }

@@ -39,8 +39,8 @@
 
 ```powershell
 # 编译（公共包在 zan-lang 仓库的 packages/ 下）
-pwsh -File client/tools/build.ps1 -Compiler D:\project\zan-lang\build\zanc.exe `
-    -Stdlib D:\project\zan-lang\stdlib -PackageProject D:\project\zan-lang
+pwsh -File client/tools/build.ps1 -Compiler "$env:ZAN_HOME\build\zanc.exe" `
+    -Stdlib "$env:ZAN_HOME\stdlib" -PackageProject "$env:ZAN_HOME"
 
 # 运行（build/arena/Arena.exe）
 cd build/arena; .\Arena.exe
@@ -61,8 +61,8 @@ cd build/arena; .\Arena.exe
 ## 怎么测
 
 ```powershell
-pwsh -File client/tools/test.ps1 -Compiler D:\project\zan-lang\build\zanc.exe `
-    -PackageProject D:\project\zan-lang
+pwsh -File client/tools/test.ps1 -Compiler "$env:ZAN_HOME\build\zanc.exe" `
+    -PackageProject "$env:ZAN_HOME"
 ```
 
 三段全绿才算过：
@@ -80,7 +80,7 @@ pwsh -File client/tools/test.ps1 -Compiler D:\project\zan-lang\build\zanc.exe `
 
 ```powershell
 $env:ARENA_SHOWCASE='face_right'
-python D:\project\zan-lang\scripts\shot_window.py build\arena\Arena.exe `
+python "$env:ZAN_HOME\scripts\shot_window.py" build\arena\Arena.exe `
     build\arena\ui_face_right.png 1.4 build\arena
 ```
 
